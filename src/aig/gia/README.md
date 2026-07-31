@@ -177,9 +177,9 @@ in section 14, it holds 135 entries: 123 `.c` files, 4 `.cpp` files, 7 `.h` file
 Markdown documents — this file and [`./ENCODING.md`](./ENCODING.md) — sit alongside them and are not
 part of that source count. `src/aig/gia/module.make` enumerates 119 build sources, being 115 of the
 `.c` files and all 4 `.cpp` files, the latter named `giaDecGraph.cpp`, `giaRrr.cpp`,
-`giaTransduction.cpp` and `giaTtopt.cpp`. The seven headers, by line count, are `gia.h` at 2654
-lines, `giaTransduction.h` at 1768, `giaNewBdd.h` at 869, `giaNewTt.h` at 292, `giaCSatP.h` at 117,
-`giaAig.h` at 78 and `giaIiff.h` at 54.
+`giaTransduction.cpp` and `giaTtopt.cpp`. The seven headers, by the line count `wc -l` reports in
+this checkout, are `gia.h` at 2658 lines, `giaTransduction.h` at 1768, `giaNewBdd.h` at 869,
+`giaNewTt.h` at 292, `giaCSatP.h` at 117, `giaAig.h` at 78 and `giaIiff.h` at 54.
 
 A census caveat, since the two figures above differ: `module.make` lists 115 `.c` files while 123
 are present, so eight `.c` files are in the directory but not in the build. Matching each filename
@@ -215,13 +215,13 @@ files implement algorithms over it — mapping, balancing, rewriting, simulation
 checking, AIGER input and output, and the rest. For the representation itself, five files carry
 almost all of it:
 
-| Read | Lines | What it holds |
+| Read | Lines, as `wc -l` reports them in this checkout | What it holds |
 |---|---|---|
-| `src/aig/gia/gia.h` | 2654 | The whole declared contract: both structs, the two sentinels, 314 `static inline` primitives, 62 `ForEach` iterator macros, 68 `#define` directives, 516 `extern` declarations, the fourteen kind predicates and the sixteen object constructors |
-| `src/aig/gia/giaMan.c` | 2415 | Manager lifecycle and ownership: `Gia_ManStart` `src/aig/gia/giaMan.c:L68`, `Gia_ManStop` `src/aig/gia/giaMan.c:L109`, `Gia_ManMemory` `src/aig/gia/giaMan.c:L239`, `Gia_ManStopP` `src/aig/gia/giaMan.c:L275`, `Gia_ManSetRegNum` `src/aig/gia/giaMan.c:L826` |
-| `src/aig/gia/giaHash.c` | 1145 | Structural hashing end to end: the key function, the chain walk, the table lifecycle, the AND, real XOR and real MUX entry points, and the canonical rebuild |
+| `src/aig/gia/gia.h` | 2658 | The whole declared contract: both structs, the two sentinels, 314 `static inline` primitives, 62 `ForEach` iterator macros, 68 `#define` directives, 516 `extern` declarations, the fourteen kind predicates and the sixteen object constructors |
+| `src/aig/gia/giaMan.c` | 2475 | Manager lifecycle and ownership: `Gia_ManStart` `src/aig/gia/giaMan.c:L68`, `Gia_ManStop` `src/aig/gia/giaMan.c:L109`, `Gia_ManMemory` `src/aig/gia/giaMan.c:L239`, `Gia_ManStopP` `src/aig/gia/giaMan.c:L275`, `Gia_ManSetRegNum` `src/aig/gia/giaMan.c:L826` |
+| `src/aig/gia/giaHash.c` | 1334 | Structural hashing end to end: the key function, the chain walk, the table lifecycle, the AND, real XOR and real MUX entry points, and the canonical rebuild |
 | `src/aig/gia/giaDup.c` | 6676 | Duplication and rebuild. Counting definitions that return a new manager, with `grep -cE '^Gia_Man_t \* Gia_ManDup' src/aig/gia/giaDup.c`, gives 90 entry points |
-| `src/aig/gia/giaUtil.c` | 3573 | The shared field-reuse protocol: the traversal-identifier counter, and the mark, value and phase helpers |
+| `src/aig/gia/giaUtil.c` | 3684 | The shared field-reuse protocol: the traversal-identifier counter, and the mark, value and phase helpers |
 
 Two more files are cited in this document as corroborating evidence without being central:
 `src/aig/gia/giaScl.c`, whose `Gia_ManCleanup` establishes the ownership convention of section 9, and
