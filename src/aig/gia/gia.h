@@ -42,6 +42,21 @@
 
 ABC_NAMESPACE_HEADER_START
 
+// Two "none" sentinels, of two different widths, for two different purposes.
+//
+// GIA_NONE is 0x1FFFFFFF = 536870911 = 2^29-1, which is exactly the largest value a 29-bit field
+// can hold.  That is what lets it serve as the "no fanin" marker for the two 29-bit offset fields
+// of Gia_Obj_t without costing a separate flag bit and without giving up more than the single
+// largest representable offset.  The offset fields are the fields that key on it: Gia_ManStart
+// writes it into both offsets of the constant-0 object (giaMan.c:L64), Gia_ManAppendCi writes it
+// into iDiff0, and five of the kind predicates below test against it.
+//
+// GIA_VOID is 0x0FFFFFFF = 268435455 = 2^28-1, which is exactly the largest value a *28*-bit field
+// can hold, and it belongs to a different struct: the 28-bit Gia_Rpr_t::iRepr declared just below.
+// The equivalence-class helpers near the end of this header key on GIA_VOID and never on GIA_NONE.
+//
+// The two differ by one hex digit and are not interchangeable.  An offset field set to GIA_VOID is
+// an ordinary offset of 268435455, not a "none"; a 28-bit iRepr cannot hold GIA_NONE at all.
 #define GIA_NONE 0x1FFFFFFF
 #define GIA_VOID 0x0FFFFFFF
 
@@ -49,11 +64,25 @@ ABC_NAMESPACE_HEADER_START
 ///                         BASIC TYPES                              ///
 ////////////////////////////////////////////////////////////////////////
 
+// Opaque forward declarations.  The three memory-manager types are defined in giaMem.c; client code
+// only ever holds addresses of them.  Gia_Dat_t is different: its definition does not exist anywhere
+// in src/ at this commit, and the only other reference to the name in the whole tree is the pUData
+// member of Gia_Man_t below, which is itself never read, written, allocated or freed.  What Gia_Dat_t
+// was meant to hold is therefore not determinable from the source; both lines are left as found.
 typedef struct Gia_MmFixed_t_        Gia_MmFixed_t;    
 typedef struct Gia_MmFlex_t_         Gia_MmFlex_t;     
 typedef struct Gia_MmStep_t_         Gia_MmStep_t;     
 typedef struct Gia_Dat_t_            Gia_Dat_t;
 
+// One equivalence-class record per object, held in the manager's pReprs side array and indexed by
+// object identifier.  The whole record is packed into a single 32-bit word: 28 + 1 + 1 + 1 + 1 bits,
+// which a compiled probe confirms as sizeof(Gia_Rpr_t) == 4.  Two consequences of the 28-bit iRepr
+// are worth holding on to.  First, its "none" value is GIA_VOID (2^28-1) and not GIA_NONE, because
+// GIA_NONE does not fit in 28 bits.  Second, the representative space is half the object space, so a
+// manager may legally hold objects whose identifiers no iRepr can name.  Gia_ObjSetRepr, near the end
+// of this header, additionally asserts that a representative either is GIA_VOID or has a strictly
+// smaller identifier than the object it represents - the same backward discipline the fanin offsets
+// follow.
 typedef struct Gia_Rpr_t_ Gia_Rpr_t;
 struct Gia_Rpr_t_
 {
@@ -64,6 +93,10 @@ struct Gia_Rpr_t_
     unsigned       fColorB :  1;  // marks cone of B
 };
 
+// One placement record per object, held in the manager's pPlacement side array.  Like Gia_Rpr_t it is
+// packed into a single 32-bit word - 1 + 15 + 1 + 15 bits, measured as sizeof(Gia_Plc_t) == 4 - which
+// is what bounds each coordinate to the range of an unsigned 15-bit field.  Unrelated to either
+// sentinel above.
 typedef struct Gia_Plc_t_ Gia_Plc_t;
 struct Gia_Plc_t_
 {
@@ -73,29 +106,119 @@ struct Gia_Plc_t_
     unsigned       yCoord  : 15;  // y-ooordinate of the placement
 };
 
+// The GIA object: one node of the And-Inverter Graph, and the reason this package calls itself
+// scalable.  Every object in the graph - the constant, every combinational input and output, every
+// AND, real XOR, real MUX and buffer - is this same struct, and nothing else.  See ./ENCODING.md for
+// the bit-by-bit treatment and ./README.md section 8 for the field-reuse matrix.
+//
+// THREE 32-BIT WORDS, TWELVE BYTES, NO TYPE TAG, NO PADDING.  The members below are grouped into
+// three words by the two blank lines: 29+1+1+1 bits, then 29+1+1+1 bits, then one full-width
+// unsigned.  Both bit-field words are therefore exactly full, and a compiled probe reports
+// sizeof(Gia_Obj_t) == 12 with nothing left over.  That budget is what makes every width here
+// load-bearing rather than arbitrary, and it is why there is no room for a field saying what kind of
+// node this is: kind is inferred instead, from fTerm, from the GIA_NONE sentinel and from the
+// relative ordering of the two offsets, by the predicates further down this header.
+//
+// Field by field:
+//
+// iDiff0, iDiff1 - a BACKWARD RELATIVE OFFSET to a fanin, measured in units of Gia_Obj_t.  Not an
+//     address and not an absolute identifier: Gia_ObjFanin0 resolves it by subtraction, as
+//     "pObj - pObj->iDiff0", and the identifier form Gia_ObjFaninId0 performs the same arithmetic on
+//     integers, as "ObjId - pObj->iDiff0".  A delta rather than an address because the object array
+//     is reallocated as it grows (see Gia_ManAppendObj), and relocating the array shifts referrer and
+//     referent alike, leaving their difference unchanged - an address would name a location the
+//     object no longer occupies.  Because the offsets are subtracted and the fields are unsigned, a
+//     fanin necessarily sits at a lower index than the object naming it, which is what makes
+//     topological order an invariant of the encoding rather than a convention.  29 bits is the width
+//     the object array needs: growth is capped at 1 << 29 objects, and only 3 bits remain in the same
+//     word for the flags beside it.  The boundary value GIA_NONE, the largest a 29-bit field can
+//     hold, means "no fanin", and is what makes the constant-0 object and every combinational input
+//     recognisable without a type tag.  iDiff1 additionally carries a second, unrelated meaning:
+//     when fTerm is set it is not an offset at all but the index of this object in the manager's
+//     combinational-input or combinational-output list - see Gia_ObjCioId below.
+// fCompl0, fCompl1 - one complement attribute per fanin, one bit each, written from the incoming
+//     literal's low bit by every constructor.  Offset and complement bit together reconstitute a
+//     fanin literal (Gia_ObjFaninLit0) or a complemented address (Gia_ObjChild0).  A real MUX's third
+//     input has no complement bit here: it travels inside the control literal held in p->pMuxes.
+// fMark0, fMark1 - general-purpose marks, and the pair carries four documented meanings depending on
+//     which pass owns it: two independent user marks, as the declaration comments say; one
+//     four-valued ternary-simulation state packed across both bits by the Gia_ObjTerSim* accessors
+//     below; a two-bit saturating fanout counter written on the *fanins* of a new AND when
+//     p->fSweeper is set; and, as fMark0 alone, a delete marker that Gia_ManDupMarked consumes and
+//     clears (giaDup.c:L1472-1476).  Reading either bit therefore requires knowing which pass last
+//     wrote it, which is information the twelve bytes do not carry.
+// fTerm - the one genuine type bit in the object.  Set by exactly two constructors, Gia_ManAppendCi
+//     and Gia_ManAppendCo; clear on the constant-0 object and on every internal node.  It is the
+//     first discriminator in the kind predicates, and it is also what licenses reading iDiff1 as a
+//     combinational-I/O index.
+// fPhase - nominally this node's value under the all-zero input pattern, as the declaration comment
+//     says.  Also written at construction time as the conjunction of the two incoming edge values -
+//     each fanin's phase XORed with that edge's own complement bit - under p->fSweeper and again
+//     under p->fBuiltInSim, and recomputed wholesale by the four phase helpers in giaUtil.c, so no
+//     single pass owns it.
+// Value - a full 32-bit word of application scratch, and the field the duplication and rebuild
+//     family uses: it holds this object's copy literal in the destination manager, with ~0 as the
+//     "not copied yet" sentinel that Gia_ManFillValue seeds (giaUtil.c:L369-374) and that the rebuild
+//     code tests as "if ( ~pObj->Value )" (giaDup.c:L1751-1752).  Gia_ManCleanValue writes 0 instead
+//     (giaUtil.c:L351-356), which is a valid copy literal and not that sentinel; the two are not
+//     interchangeable.
 typedef struct Gia_Obj_t_ Gia_Obj_t;
 struct Gia_Obj_t_
 {
+    // word 1 of 3: a 29-bit offset and its three flag bits, 32 bits exactly
     unsigned       iDiff0 :  29;  // the diff of the first fanin
     unsigned       fCompl0:   1;  // the complemented attribute
     unsigned       fMark0 :   1;  // first user-controlled mark
     unsigned       fTerm  :   1;  // terminal node (CI/CO)
 
+    // word 2 of 3: the second offset and its three flag bits, 32 bits exactly
     unsigned       iDiff1 :  29;  // the diff of the second fanin
     unsigned       fCompl1:   1;  // the complemented attribute
     unsigned       fMark1 :   1;  // second user-controlled mark
     unsigned       fPhase :   1;  // value under 000 pattern
 
+    // word 3 of 3: one full-width unsigned, 32 bits, no bit fields
     unsigned       Value;         // application-specific value
 };
 // Value is currently used to store several types of information
 // - pointer to the next node in the hash table during structural hashing
 // - pointer to the node copy during duplication 
 
+// The note above is retained exactly as found.  On its first bullet: at this commit the
+// structural-hashing chain is not kept in Value.  Bucket heads live in p->vHTable and the chain links
+// live in p->vHash, an integer vector indexed by object identifier, which is what Gia_ManHashFind
+// walks (giaHash.c:L54-68) and what Gia_ManAppendObj below maintains by pushing one p->vHash entry per
+// new object.  Its second bullet does describe the current code, with one refinement: what Value
+// carries during duplication is a copy *literal* rather than an address, which is why Gia_ObjCopy
+// applies Abc_Lit2Var to it.  Recorded in ./README.md section 13 as well.
+
+// The manager: one flat array of objects, plus a large number of optional side tables, most of them
+// indexed by object identifier and therefore kept the same length as the object array.  A compiled
+// probe reports sizeof(Gia_Man_t) == 1136, but that is the fixed overhead of the struct alone - almost
+// every table below is reached through an address, so a live manager's real footprint is dominated by
+// heap allocations this figure does not include, the object array first among them at twelve bytes per
+// object.
+//
+// Reading this declaration field by field is not the way in: of the 153 declaration lines, most belong
+// to one subsystem or another and are irrelevant to the representation itself.  The block comments
+// below mark the functional groups; ./README.md section 6 tabulates all of them with line ranges.
+//
+// Two practical notes.  Eight members are Vec_Int_t BY VALUE rather than by address - vHash, vHTable,
+// vRefs, vCopies, vCopies2, vCopiesTwo, vSuppVars and vVarMap - which is why the code that touches
+// them takes the member's address (&p->vHTable, &p->vCopies) and why teardown erases rather than frees
+// them.  And for ownership, read allocation and teardown rather than the estimate: Gia_ManStart
+// (giaMan.c:L57-69) shows what a manager is given at birth and Gia_ManStop (giaMan.c:L82-183) is the
+// definitive list of what it releases.  Gia_ManMemory (giaMan.c:L196-213) is the package's own size
+// estimate and sums fourteen terms only, so several allocations the manager owns are absent from it.
 // new AIG manager
 typedef struct Gia_Man_t_ Gia_Man_t;
 struct Gia_Man_t_
 {
+    // core storage: the object array, the counters the constructors maintain instead of recomputing
+    // them by scanning, and the two combinational-I/O identifier lists.  vCis and vCos are partitioned
+    // by position and not by a flag: every primary input precedes every flop output in vCis, and every
+    // primary output precedes every flop input in vCos, which is what lets Gia_ManPiNum be a
+    // subtraction.
     char *         pName;         // name of the AIG
     char *         pSpec;         // name of the input file
     int            nRegs;         // number of registers
@@ -206,25 +329,52 @@ struct Gia_Man_t_
     int            MappedArea;    // area after mapping
     int            MappedDelay;   // delay after mapping
     // bit-parallel simulation
-    int            fBuiltInSim;
-    int            iPatsPi;
-    int            nSimWords;
-    int            nSimWordsT;
-    int            iPastPiMax;
-    int            nSimWordsMax;
-    Vec_Wrd_t *    vSims;
-    Vec_Wrd_t *    vSimsT;
-    Vec_Wrd_t *    vSimsPi;
-    Vec_Wrd_t *    vSimsPo;
-    Vec_Int_t *    vClassOld;
-    Vec_Int_t *    vClassNew;
-    Vec_Int_t *    vPats;
-    Vec_Bit_t *    vPolars;
+    // Simulation state the manager owns itself instead of leaving to a caller-side table.
+    // Gia_ManBuiltInSimStart (giaSim.c:L776-796) switches the block on: it sets fBuiltInSim,
+    // fixes nSimWords, and allocates vSimsPi with one block of nSimWords 64-bit words per
+    // combinational input and vSims with one block per object; Gia_ManStop releases the
+    // vectors (giaMan.c:L95-103). Capacity is therefore 64 * nSimWords patterns, the bound
+    // iPatsPi is measured against (giaSim.c:L966, L981); once it is reached and nSimWords has
+    // grown to nSimWordsMax, further patterns reuse older slots in the wrapping order kept by
+    // iPastPiMax (giaSim.c:L972-977). Two strides for vSimsPi coexist in the tree:
+    // Gia_ObjSimWords below divides Vec_WrdSize(vSimsPi) by Gia_ManPiNum, while
+    // Gia_ManBuiltInDataPi indexes by nSimWords (giaSim.c:L766).
+    // Five members below are declared and released but never filled anywhere in src/ at this
+    // commit, so what they were meant to hold is not determinable from the source here.
+    // nSimWordsT has no reference at all beyond its declaration. vSimsT, vClassOld, vClassNew
+    // and vPats are only released, by Gia_ManStop (giaMan.c:L95-100); the identically named
+    // names used elsewhere belong to other structures or are locals (Gia_RsbMan_t at
+    // giaSimBase.c:L1726, Hcd_Man_t at giaGiarf.c:L42-43, Supp_Man_t at giaSupps.c:L51,
+    // a local at giaPat2.c:L666). vPolars is filled from outside the package
+    // (base/acb/acbFunc.c:L509, L518) and released here (giaMan.c:L98), but nothing in src/ reads it.
+    int            fBuiltInSim;   // built-in simulation is on
+    int            iPatsPi;       // next stimulus pattern slot
+    int            nSimWords;     // words of stimulus per object
+    int            nSimWordsT;    // declared only; see the note above
+    int            iPastPiMax;    // wrapping slot used once full
+    int            nSimWordsMax;  // ceiling on nSimWords
+    Vec_Wrd_t *    vSims;         // object values, nSimWords per object
+    Vec_Wrd_t *    vSimsT;        // released only; never set in src/
+    Vec_Wrd_t *    vSimsPi;       // input stimulus, one block per input
+    Vec_Wrd_t *    vSimsPo;       // output values, one block per output
+    Vec_Int_t *    vClassOld;     // released only; never set in src/
+    Vec_Int_t *    vClassNew;     // released only; never set in src/
+    Vec_Int_t *    vPats;         // released only; never set in src/
+    Vec_Bit_t *    vPolars;       // set outside GIA; never read in src/
     // incremental simulation
-    int            fIncrSim;
-    int            iNextPi;
-    int            iTimeStamp;
-    Vec_Int_t *    vTimeStamps;
+    // A second simulation mode that reuses iPatsPi, nSimWords and vSims from the block above
+    // and adds a generation counter. Gia_ManIncrSimStart (giaSim.c:L1150-1162) sets fIncrSim,
+    // seeds iTimeStamp to 1 and allocates vTimeStamps. Gia_ManIncrSimUpdate
+    // (giaSim.c:L1131-1148) extends vTimeStamps to one entry per object, extends vSims, seeds
+    // every combinational input from iNextPi up to Gia_ManCiNum, then sets iNextPi to that
+    // count. Gia_ManIncrSimSet (giaSim.c:L1174-1190) increments iTimeStamp, stamps each object
+    // it writes, and advances iPatsPi with wraparound at 64 * nSimWords. Comparing an object's
+    // stamp against iTimeStamp is what tells a pass whether that object's words are current -
+    // the same generation-counter device the traversal identifiers use further down this file.
+    int            fIncrSim;      // incremental simulation is on
+    int            iNextPi;       // first input not yet seeded
+    int            iTimeStamp;    // current generation counter
+    Vec_Int_t *    vTimeStamps;   // per-object generation of last write
     // truth table computation for small functions
     int            nTtVars;       // truth table variables
     int            nTtWords;      // truth table words
@@ -242,15 +392,36 @@ struct Gia_Man_t_
     Vec_Int_t      vCopiesTwo;    // intermediate copies
     Vec_Int_t      vSuppVars;     // used variables
     Vec_Int_t      vVarMap;       // used variables
-    Gia_Dat_t *    pUData;
+    // What this member was meant to carry is not determinable from the source at this commit:
+    // its type Gia_Dat_t is forward-declared at the top of this file and defined nowhere in
+    // src/, and this declaration is the only other reference to either name in the tree - the
+    // field is never read, written, allocated or released, not even by Gia_ManStop.
+    Gia_Dat_t *    pUData;        // purpose not determinable in src/
     // retiming data
-    Vec_Str_t *    vStopsF;
-    Vec_Str_t *    vStopsB;
+    // One stop character per object, produced by Gia_ManRetimableF and Gia_ManRetimableB on a
+    // manager read from a MiniAIG (giaMini.c:L1378-1381, which first asserts both are absent)
+    // and released by Gia_ManStop (giaMan.c:L161-162). The retiming feasibility check is the
+    // reader: a nonzero vStopsF entry pins that object's arrival time to zero
+    // (giaSif.c:L500-502), and a nonzero vStopsB entry whose time exceeds the target period
+    // rejects the period (giaSif.c:L516-519). Both are guarded by a null test at each use.
+    Vec_Str_t *    vStopsF;       // per-object forward stop flags
+    Vec_Str_t *    vStopsB;       // per-object backward stop flags
     // iteration with boxes
-    int            iFirstNonPiId;
-    int            iFirstPoId;
-    int            iFirstAndObj;
-    int            iFirstPoObj;
+    // Four boundary indices that let the WithBoxes iterators near the end of this file walk
+    // only the part of the network that lies outside the boxes. The LUT mapper is the one
+    // place in src/ that fills them (giaNf.c:L2721-2724): iFirstNonPiId becomes the number of
+    // true primary inputs - Tim_ManPiNum when a timing manager is present, Gia_ManCiNum when
+    // it is not - iFirstPoId the combinational-output index at which the true primary outputs
+    // begin, iFirstAndObj one past the constant object and those true primary inputs, and
+    // iFirstPoObj the object identifier of the first true primary output. Gia_ManStart
+    // allocates the manager with ABC_CALLOC (giaMan.c:L61), so on a manager that has not been
+    // through that pass all four read zero: the two object-walking iterators then traverse
+    // nothing, Gia_ManForEachCiIdWithBoxes traverses nothing, and Gia_ManForEachCoWithBoxes
+    // traverses every combinational output because its upper bound is the vCos size.
+    int            iFirstNonPiId; // number of true primary inputs
+    int            iFirstPoId;    // CO index where true POs begin
+    int            iFirstAndObj;  // first object id after const and PIs
+    int            iFirstPoObj;   // object id of the first true PO
     Vec_Str_t *    vTTISOPs;      // truth tables from ISOP computation
     Vec_Int_t *    vTTLut;      // truth tables from ISOP computation
     Vec_Int_t *    vMFFCsInfo;    // MFFC information
@@ -455,17 +626,50 @@ static inline void Gia_ManTruthNot( unsigned * pOut, unsigned * pIn, int nVars )
         pOut[w] = ~pIn[w];
 }
 
+// GIA carries two parallel ways of naming a possibly inverted edge, and they must never be
+// mixed in one value. The first is the LITERAL: a plain int holding an object identifier in
+// its upper bits and the inversion in bit 0, built with Abc_Var2Lit and taken apart with
+// Abc_Lit2Var and Abc_LitIsCompl. Because the constant-0 object always sits at identifier 0,
+// literal 0 is constant 0 and literal 1 is constant 1, which is why the two constant tests
+// below are exact comparisons and Gia_ManIsConstLit collapses them into iLit <= 1. Every
+// append constructor further down this file returns Gia_ObjId(p, pObj) << 1, that is, an
+// uncomplemented literal - a caller wanting the inverted edge complements the returned value
+// itself. Literals are the form stored in side tables (Value, vCopies, pMuxes) because they
+// survive reallocation of the object array, which addresses do not.
 static inline int          Gia_ManConst0Lit()                  { return 0; }
 static inline int          Gia_ManConst1Lit()                  { return 1; }
 static inline int          Gia_ManIsConst0Lit( int iLit )      { return (iLit == 0); }
 static inline int          Gia_ManIsConst1Lit( int iLit )      { return (iLit == 1); }
 static inline int          Gia_ManIsConstLit( int iLit )       { return (iLit <= 1); }
 
+// The second convention is the TAGGED POINTER: the inversion rides in bit 0 of a Gia_Obj_t *
+// itself, so a single pointer-sized value names both the object and the polarity. This is
+// available because Gia_Obj_t is built entirely from unsigned bit fields and one unsigned, so
+// every object address inside the array is aligned to at least the alignment of unsigned and
+// bit 0 of such an address is always clear; note that it is the alignment, not the twelve-byte
+// size, that frees the bit. The four helpers below are pure bit twiddling on ABC_PTRUINT_T:
+// Gia_Regular clears the tag, Gia_Not flips it, Gia_NotCond flips it conditionally, and
+// Gia_IsComplement reads it. A tagged pointer must be passed through Gia_Regular before any
+// field of the object is touched, since the tagged value is not a valid object address.
+// Gia_Obj2Lit and Gia_Lit2Obj below are the explicit bridge between the two conventions.
 static inline Gia_Obj_t *  Gia_Regular( Gia_Obj_t * p )        { return (Gia_Obj_t *)((ABC_PTRUINT_T)(p) & ~01);                           }
 static inline Gia_Obj_t *  Gia_Not( Gia_Obj_t * p )            { return (Gia_Obj_t *)((ABC_PTRUINT_T)(p) ^  01);                           }
 static inline Gia_Obj_t *  Gia_NotCond( Gia_Obj_t * p, int c ) { return (Gia_Obj_t *)((ABC_PTRUINT_T)(p) ^ (c));                           }
 static inline int          Gia_IsComplement( Gia_Obj_t * p )   { return (int)((ABC_PTRUINT_T)(p) & 01);                                    }
 
+// Sizes of the network. Most of these are derived on the spot from stored quantities rather
+// than cached, which is why they are safe to call at any point during construction: only
+// nRegs, nXors, nMuxes, nBufs and nConstrs are fields, and the constructors below maintain
+// them. Three of the derivations depend on the ordering discipline the package expects.
+// Gia_ManPiNum subtracts nRegs from the combinational-input count because the primary inputs
+// occupy the front of vCis and the flop outputs its tail; Gia_ManPoNum does the same for vCos.
+// Gia_ManAndNum takes everything that is neither a terminal nor the constant object - the
+// trailing - 1 is the constant-0 object at identifier 0 - so it counts buffers, real XOR and
+// real MUX objects too, since each of those occupies one object; Gia_ManAndNotBufNum removes
+// the buffers again. Gia_ManCandNum is the combinational inputs plus that AND count, which is
+// every object except the constant and the combinational outputs. Gia_ManHasChoices is only a
+// null test on the pSibls side array, while Gia_ManChoiceNum walks the whole array and is
+// therefore linear in the object count rather than a stored total.
 static inline char *       Gia_ManName( Gia_Man_t * p )        { return p->pName;                                                          }
 static inline int          Gia_ManCiNum( Gia_Man_t * p )       { return Vec_IntSize(p->vCis);                                              }
 static inline int          Gia_ManCoNum( Gia_Man_t * p )       { return Vec_IntSize(p->vCos);                                              }
@@ -484,6 +688,16 @@ static inline void         Gia_ManFlipVerbose( Gia_Man_t * p ) { p->fVerbose ^= 
 static inline int          Gia_ManHasChoices( Gia_Man_t * p )  { return p->pSibls != NULL;                                                 } 
 static inline int          Gia_ManChoiceNum( Gia_Man_t * p )   { int c = 0; if (p->pSibls) { int i; for (i = 0; i < p->nObjs; i++) c += (int)(p->pSibls[i] > 0); } return c; } 
 
+// Getting at objects. Gia_ManConst0 is the first slot of the object array, the one
+// Gia_ManStart fills with GIA_NONE in both offsets (giaMan.c:L64); there is no second object
+// for the constant 1, and Gia_ManConst1 returns the very same address with the tag bit set, so
+// its result is a tagged pointer that must go through Gia_Regular before any field is read.
+// Gia_ManObj converts an identifier back into an address and is the exact inverse of
+// Gia_ObjId below, range-asserted the same way. Gia_ManCi and Gia_ManCo go through the vCis
+// and vCos identifier lists rather than scanning, and the four role accessors sit on top of
+// them: Gia_ManPi and Gia_ManPo index the front sections, while Gia_ManRo and Gia_ManRi skip
+// past the primary counts into the flop sections. Flop output v and flop input v therefore
+// belong to the same register purely by position in those two lists.
 static inline Gia_Obj_t *  Gia_ManConst0( Gia_Man_t * p )      { return p->pObjs;                                                          }
 static inline Gia_Obj_t *  Gia_ManConst1( Gia_Man_t * p )      { return Gia_Not(Gia_ManConst0(p));                                         }
 static inline Gia_Obj_t *  Gia_ManObj( Gia_Man_t * p, int v )  { assert( v >= 0 && v < p->nObjs ); return p->pObjs + v;                    }
@@ -494,6 +708,22 @@ static inline Gia_Obj_t *  Gia_ManPo( Gia_Man_t * p, int v )   { assert( v < Gia
 static inline Gia_Obj_t *  Gia_ManRo( Gia_Man_t * p, int v )   { assert( v < Gia_ManRegNum(p) ); return Gia_ManCi( p, Gia_ManPiNum(p)+v ); }
 static inline Gia_Obj_t *  Gia_ManRi( Gia_Man_t * p, int v )   { assert( v < Gia_ManRegNum(p) ); return Gia_ManCo( p, Gia_ManPoNum(p)+v ); }
 
+// Identity, value, phase and names.
+// Gia_ObjId is the whole of GIA's naming scheme: an object's identifier is its distance from
+// the base of the array, obtained by pointer subtraction and guarded by a range assertion. An
+// identifier is therefore meaningful only against the manager it came from, and passing an
+// object of one manager to another manager's accessor is caught by that assertion rather than
+// silently producing a number. Gia_ObjCioId and Gia_ObjSetCioId are the terminal overload of
+// the second offset field: both assert fTerm first, because on a terminal iDiff1 is not an
+// offset at all but the object's position in vCis or vCos.
+// Gia_ObjPhase reads the stored bit directly, so it expects a regular pointer, whereas
+// Gia_ObjPhaseReal expects a tagged pointer and folds the tag into the answer - the two are
+// not interchangeable. Gia_ObjPhaseDiff compares two objects given by identifier.
+// The four name accessors are null-safe: each tests its vector and returns NULL when the
+// manager carries no names, so callers need no test of their own. Gia_ObjNameObj shows that
+// vNamesNode is indexed by object identifier; vNamesIn and vNamesOut are indexed by whatever
+// numbering the caller passes in, which in practice is the combinational-input or -output
+// index rather than an object identifier.
 static inline int          Gia_ObjId( Gia_Man_t * p, Gia_Obj_t * pObj )        { assert( p->pObjs <= pObj && pObj < p->pObjs + p->nObjs ); return pObj - p->pObjs; }
 static inline int          Gia_ObjCioId( Gia_Obj_t * pObj )                    { assert( pObj->fTerm ); return pObj->iDiff1;                 }
 static inline void         Gia_ObjSetCioId( Gia_Obj_t * pObj, int v )          { assert( pObj->fTerm ); pObj->iDiff1 = v;                    }
@@ -507,53 +737,138 @@ static inline char *       Gia_ObjCoName( Gia_Man_t * p, int i )               {
 static inline char *       Gia_ObjName( Gia_Man_t * p, int i )                 { return p->vNamesNode ? (char*)Vec_PtrEntry(p->vNamesNode, i) : NULL; }
 static inline char *       Gia_ObjNameObj( Gia_Man_t * p, Gia_Obj_t * pObj )   { return p->vNamesNode ? (char*)Vec_PtrEntry(p->vNamesNode, Gia_ObjId(p, pObj)) : NULL; }
 
+// TELLING THE KINDS APART. There is no type-tag field anywhere in Gia_Obj_t. The twelve bytes
+// are two offsets, four flag bits and one full word, and every question about an object's kind
+// is answered from three things only: the fTerm bit, the GIA_NONE sentinel in the offsets, and
+// the relative ORDER of the two offsets. That is the price of the twelve-byte object, and it
+// means these predicates rather than the struct declaration are the definition of "what kind".
+//   fTerm set,   iDiff0 == GIA_NONE  -> combinational input
+//   fTerm set,   iDiff0 != GIA_NONE  -> combinational output, its one fanin in iDiff0
+//   fTerm clear, both  == GIA_NONE   -> the constant-0 object
+//   fTerm clear, iDiff0 != GIA_NONE  -> an internal node, and then the ordering decides:
+//        iDiff0 >  iDiff1            -> AND, or a real MUX when pMuxes marks the identifier
+//        iDiff0 <  iDiff1            -> real XOR
+//        iDiff0 == iDiff1            -> buffer
+// DISPATCH ORDER MATTERS. Gia_ObjIsAnd is true for a buffer, for a real XOR and for a real MUX
+// as well as for a plain AND, because all four are internal nodes with a fanin. An if/else
+// chain that tests it first therefore swallows the other three, and the narrower tests have to
+// come first. Gia_ManDupMarked is the in-tree example that gets the order right: buffer, then
+// XOR, then MUX, then plain AND (giaDup.c:L1478-1488).
+// Two asymmetries in this block are worth knowing. Gia_ObjIsBuf and Gia_ObjIsConst0 read the
+// raw fields instead of building on Gia_ObjIsAnd, so they are safe on any object; but
+// Gia_ObjIsConst0 answers by encoding rather than by position, making it true of any object
+// that carries GIA_NONE in both offsets, whereas Gia_ManObjIsConst0 compares the address with
+// the array base and so is true of exactly one object. And Gia_ObjIsMuxId, Gia_ObjIsMux and
+// Gia_ObjIsAndReal take the manager because MUX-ness is not in the object at all: it lives in
+// the pMuxes side array, so the very same twelve bytes read as a real AND in a manager without
+// pMuxes and as a real MUX in one that marks that identifier.
+// Gia_ObjIsCand is the union of the two kinds that carry a value of their own, internal nodes
+// and combinational inputs, and Gia_ObjIsAndOrConst0 is just the negation of Gia_ObjIsTerm.
 static inline int          Gia_ObjIsTerm( Gia_Obj_t * pObj )                   { return pObj->fTerm;                             } 
 static inline int          Gia_ObjIsAndOrConst0( Gia_Obj_t * pObj )            { return!pObj->fTerm;                             } 
 static inline int          Gia_ObjIsCi( Gia_Obj_t * pObj )                     { return pObj->fTerm && pObj->iDiff0 == GIA_NONE; } 
 static inline int          Gia_ObjIsCo( Gia_Obj_t * pObj )                     { return pObj->fTerm && pObj->iDiff0 != GIA_NONE; } 
 static inline int          Gia_ObjIsAnd( Gia_Obj_t * pObj )                    { return!pObj->fTerm && pObj->iDiff0 != GIA_NONE; } 
-static inline int          Gia_ObjIsXor( Gia_Obj_t * pObj )                    { return Gia_ObjIsAnd(pObj) && pObj->iDiff0 < pObj->iDiff1; } 
+static inline int          Gia_ObjIsXor( Gia_Obj_t * pObj )                    { return Gia_ObjIsAnd(pObj) && pObj->iDiff0 < pObj->iDiff1; } // the offset order IS the XOR tag
 static inline int          Gia_ObjIsMuxId( Gia_Man_t * p, int iObj )           { return p->pMuxes && p->pMuxes[iObj] > 0;        } 
 static inline int          Gia_ObjIsMux( Gia_Man_t * p, Gia_Obj_t * pObj )     { return Gia_ObjIsMuxId( p, Gia_ObjId(p, pObj) ); } 
-static inline int          Gia_ObjIsAndReal( Gia_Man_t * p, Gia_Obj_t * pObj ) { return Gia_ObjIsAnd(pObj) && pObj->iDiff0 > pObj->iDiff1 && !Gia_ObjIsMux(p, pObj); } 
-static inline int          Gia_ObjIsBuf( Gia_Obj_t * pObj )                    { return pObj->iDiff0 == pObj->iDiff1 && pObj->iDiff0 != GIA_NONE && !pObj->fTerm;    } 
-static inline int          Gia_ObjIsAndNotBuf( Gia_Obj_t * pObj )              { return Gia_ObjIsAnd(pObj) && pObj->iDiff0 != pObj->iDiff1; } 
+static inline int          Gia_ObjIsAndReal( Gia_Man_t * p, Gia_Obj_t * pObj ) { return Gia_ObjIsAnd(pObj) && pObj->iDiff0 > pObj->iDiff1 && !Gia_ObjIsMux(p, pObj); } // same bits as a real MUX; pMuxes separates them
+static inline int          Gia_ObjIsBuf( Gia_Obj_t * pObj )                    { return pObj->iDiff0 == pObj->iDiff1 && pObj->iDiff0 != GIA_NONE && !pObj->fTerm;    } // equal non-sentinel offsets, not a terminal
+static inline int          Gia_ObjIsAndNotBuf( Gia_Obj_t * pObj )              { return Gia_ObjIsAnd(pObj) && pObj->iDiff0 != pObj->iDiff1; } // exists because Gia_ObjIsAnd is true for buffers
 static inline int          Gia_ObjIsCand( Gia_Obj_t * pObj )                   { return Gia_ObjIsAnd(pObj) || Gia_ObjIsCi(pObj); } 
 static inline int          Gia_ObjIsConst0( Gia_Obj_t * pObj )                 { return pObj->iDiff0 == GIA_NONE && pObj->iDiff1 == GIA_NONE;     } 
 static inline int          Gia_ManObjIsConst0( Gia_Man_t * p, Gia_Obj_t * pObj){ return pObj == p->pObjs;                        } 
 
+// The bridge between the two conventions introduced above. Gia_Obj2Lit takes a TAGGED pointer,
+// strips the tag to get a legal address, turns that into an identifier and folds the tag back
+// in as bit 0. Gia_Lit2Obj is the inverse and hands back a tagged pointer, so its result must
+// be regularized before any field is read. Gia_ManCiLit is the shorthand a builder wants: the
+// literal of a combinational input given its position in vCis.
 static inline int          Gia_Obj2Lit( Gia_Man_t * p, Gia_Obj_t * pObj )      { return Abc_Var2Lit(Gia_ObjId(p, Gia_Regular(pObj)), Gia_IsComplement(pObj)); }
 static inline Gia_Obj_t *  Gia_Lit2Obj( Gia_Man_t * p, int iLit )              { return Gia_NotCond(Gia_ManObj(p, Abc_Lit2Var(iLit)), Abc_LitIsCompl(iLit));  }
 static inline int          Gia_ManCiLit( Gia_Man_t * p, int CiId )             { return Gia_Obj2Lit( p, Gia_ManCi(p, CiId) );                }
 
+// Two numbering spaces meet here and are easy to confuse: an OBJECT IDENTIFIER indexes pObjs,
+// while a CIO INDEX indexes vCis or vCos. Gia_ManIdToCioId goes from the first to the second by
+// reading the terminal overload of iDiff1, and so inherits the fTerm assertion of Gia_ObjCioId;
+// Gia_ManCiIdToId and Gia_ManCoIdToId go the other way through the identifier lists. Nothing in
+// the types distinguishes the two spaces - both are int - so which one a variable holds is
+// carried by its name alone.
 static inline int          Gia_ManIdToCioId( Gia_Man_t * p, int Id )           { return Gia_ObjCioId( Gia_ManObj(p, Id) );                   }
 static inline int          Gia_ManCiIdToId( Gia_Man_t * p, int CiId )          { return Gia_ObjId( p, Gia_ManCi(p, CiId) );                  }
 static inline int          Gia_ManCoIdToId( Gia_Man_t * p, int CoId )          { return Gia_ObjId( p, Gia_ManCo(p, CoId) );                  }
 
+// The ROLE of a terminal - primary input or flop output, primary output or flop input - is not
+// a stored bit either. It is a range test on the CIO index, which works only because the front
+// of vCis holds every primary input and its tail every flop output, and likewise for vCos. That
+// is the whole reason the construction order matters: append all primary inputs before any flop
+// output, all primary outputs before any flop input, then declare the register count once. Note
+// that each of the four leads with Gia_ObjIsCi or Gia_ObjIsCo, so the short-circuit is what
+// keeps the following Gia_ObjCioId - which asserts fTerm - from firing on an internal node.
 static inline int          Gia_ObjIsPi( Gia_Man_t * p, Gia_Obj_t * pObj )      { return Gia_ObjIsCi(pObj) && Gia_ObjCioId(pObj) < Gia_ManPiNum(p);   } 
 static inline int          Gia_ObjIsPo( Gia_Man_t * p, Gia_Obj_t * pObj )      { return Gia_ObjIsCo(pObj) && Gia_ObjCioId(pObj) < Gia_ManPoNum(p);   } 
 static inline int          Gia_ObjIsRo( Gia_Man_t * p, Gia_Obj_t * pObj )      { return Gia_ObjIsCi(pObj) && Gia_ObjCioId(pObj) >= Gia_ManPiNum(p);  } 
 static inline int          Gia_ObjIsRi( Gia_Man_t * p, Gia_Obj_t * pObj )      { return Gia_ObjIsCo(pObj) && Gia_ObjCioId(pObj) >= Gia_ManPoNum(p);  } 
 
+// Pairing the two halves of a register. A flop is one combinational input and one combinational
+// output, matched by position within their tail sections, and the shift below is that pairing in
+// closed form: since Gia_ManPiNum is Gia_ManCiNum - nRegs and Gia_ManPoNum is Gia_ManCoNum -
+// nRegs, adding Gia_ManCoNum - Gia_ManCiNum to a CI index i lands on CO index Gia_ManPoNum +
+// (i - Gia_ManPiNum), and the reverse shift undoes it. Both assert the role first, so they
+// cannot be used to probe whether an object is a flop half - test with Gia_ObjIsRo or
+// Gia_ObjIsRi instead. The two identifier forms merely wrap these in Gia_ManObj and Gia_ObjId.
 static inline Gia_Obj_t *  Gia_ObjRoToRi( Gia_Man_t * p, Gia_Obj_t * pObj )    { assert( Gia_ObjIsRo(p, pObj) ); return Gia_ManCo(p, Gia_ManCoNum(p) - Gia_ManCiNum(p) + Gia_ObjCioId(pObj)); } 
 static inline Gia_Obj_t *  Gia_ObjRiToRo( Gia_Man_t * p, Gia_Obj_t * pObj )    { assert( Gia_ObjIsRi(p, pObj) ); return Gia_ManCi(p, Gia_ManCiNum(p) - Gia_ManCoNum(p) + Gia_ObjCioId(pObj)); } 
 static inline int          Gia_ObjRoToRiId( Gia_Man_t * p, int ObjId )         { return Gia_ObjId( p, Gia_ObjRoToRi( p, Gia_ManObj(p, ObjId) ) );    } 
 static inline int          Gia_ObjRiToRoId( Gia_Man_t * p, int ObjId )         { return Gia_ObjId( p, Gia_ObjRiToRo( p, Gia_ManObj(p, ObjId) ) );    }
 
+// RESOLVING FANINS. This block is where the offset encoding is actually cashed in, and the
+// arithmetic is the same in every member of it: a fanin is stored as a BACKWARD DISTANCE in
+// units of Gia_Obj_t, so the fanin of pObj is at pObj - pObj->iDiff0 and its identifier is
+// ObjId - pObj->iDiff0. Nothing here dereferences a stored address, because none is stored.
+// Three consequences follow directly from the subtraction and are worth stating once:
+//  - Both fanins of an object necessarily lie at LOWER identifiers than the object itself, so
+//    topological order is a property of the encoding rather than a convention a pass upholds.
+//    The encoding cannot express a forward reference at all.
+//  - The offsets are position-independent, so they stay correct when Gia_ManAppendObj below
+//    reallocates the object array and every object moves in memory. Any Gia_Obj_t * a caller
+//    was holding does not survive that move; an identifier does.
+//  - A distance is only meaningful against the array it was measured in, which is why objects
+//    are never migrated between managers - duplication rebuilds them instead.
+// FORM CONVENTIONS across the block. Members named ...Fanin0/...Fanin1 return addresses;
+// ...FaninId0/...FaninId1 do the same arithmetic on ints and take the object's OWN identifier
+// as a parameter, while the ...Id0p/...Id1p forms recover that identifier themselves through
+// Gia_ObjId and so cost one extra subtraction; ...FaninLit* compose identifier and complement
+// bit into a literal; ...Child* compose address and complement bit into a tagged pointer. The
+// generic ...Fanin( pObj, n ) selectors pick fanin 0 or 1 from an int index.
+// THE THIRD FANIN IS DIFFERENT. Gia_ObjFanin2, Gia_ObjFaninC2, Gia_ObjFaninId2, Gia_ObjFaninLit2
+// and their p-forms read the pMuxes side array, not the object, and they test only whether that
+// array EXISTS - not whether this object is a MUX. In a manager that carries pMuxes, asking for
+// fanin 2 of a plain AND reads that identifier's slot, which is zero, and reports object 0 with
+// no complement rather than reporting "no such fanin". Their missing answers also differ in
+// type: Gia_ObjFanin2 yields NULL when pMuxes is absent, whereas the identifier and literal
+// forms yield -1. Callers that care must ask Gia_ObjIsMux first.
+// Gia_ObjFaninNum reports 3 for a MUX, 2 for an internal node, 1 for a combinational output and
+// 0 otherwise, and it needs the manager only for the MUX question; because it has no buffer
+// case, a buffer is reported as having two fanins even though its two offsets are equal.
+// Gia_ObjFlipFaninC0 is the one sanctioned in-place mutation of an edge in this file, and it
+// asserts a combinational output, so no structurally hashed node can be altered through it.
+// Gia_ObjWhatFanin answers "which input of pObj is pFanin" and ends in assert(0) and -1: it is
+// defined only for an object that really is a fanin, and is not a membership test.
 static inline int          Gia_ObjDiff0( Gia_Obj_t * pObj )                    { return pObj->iDiff0;         }
 static inline int          Gia_ObjDiff1( Gia_Obj_t * pObj )                    { return pObj->iDiff1;         }
 static inline int          Gia_ObjFaninC0( Gia_Obj_t * pObj )                  { return pObj->fCompl0;        }
 static inline int          Gia_ObjFaninC1( Gia_Obj_t * pObj )                  { return pObj->fCompl1;        }
 static inline int          Gia_ObjFaninC2( Gia_Man_t * p, Gia_Obj_t * pObj )   { return p->pMuxes && Abc_LitIsCompl(p->pMuxes[Gia_ObjId(p, pObj)]);  }
 static inline int          Gia_ObjFaninC( Gia_Obj_t * pObj, int n )            { return n ? Gia_ObjFaninC1(pObj) : Gia_ObjFaninC0(pObj);             }
-static inline Gia_Obj_t *  Gia_ObjFanin0( Gia_Obj_t * pObj )                   { return pObj - pObj->iDiff0;  }
-static inline Gia_Obj_t *  Gia_ObjFanin1( Gia_Obj_t * pObj )                   { return pObj - pObj->iDiff1;  }
+static inline Gia_Obj_t *  Gia_ObjFanin0( Gia_Obj_t * pObj )                   { return pObj - pObj->iDiff0;  } // pointer arithmetic, not a stored address
+static inline Gia_Obj_t *  Gia_ObjFanin1( Gia_Obj_t * pObj )                   { return pObj - pObj->iDiff1;  } // subtraction is why fanins precede the object
 static inline Gia_Obj_t *  Gia_ObjFanin2( Gia_Man_t * p, Gia_Obj_t * pObj )    { return p->pMuxes ? Gia_ManObj(p, Abc_Lit2Var(p->pMuxes[Gia_ObjId(p, pObj)])) : NULL;  }
 static inline Gia_Obj_t *  Gia_ObjFanin( Gia_Obj_t * pObj, int n )             { return n ? Gia_ObjFanin1(pObj) : Gia_ObjFanin0(pObj);               }
 static inline Gia_Obj_t *  Gia_ObjChild0( Gia_Obj_t * pObj )                   { return Gia_NotCond( Gia_ObjFanin0(pObj), Gia_ObjFaninC0(pObj) ); }
 static inline Gia_Obj_t *  Gia_ObjChild1( Gia_Obj_t * pObj )                   { return Gia_NotCond( Gia_ObjFanin1(pObj), Gia_ObjFaninC1(pObj) ); }
 static inline Gia_Obj_t *  Gia_ObjChild2( Gia_Man_t * p, Gia_Obj_t * pObj )    { return Gia_NotCond( Gia_ObjFanin2(p, pObj), Gia_ObjFaninC2(p, pObj) ); }
-static inline int          Gia_ObjFaninId0( Gia_Obj_t * pObj, int ObjId )      { return ObjId - pObj->iDiff0;    }
+static inline int          Gia_ObjFaninId0( Gia_Obj_t * pObj, int ObjId )      { return ObjId - pObj->iDiff0;    } // the same delta, applied to identifiers
 static inline int          Gia_ObjFaninId1( Gia_Obj_t * pObj, int ObjId )      { return ObjId - pObj->iDiff1;    }
 static inline int          Gia_ObjFaninId2( Gia_Man_t * p, int ObjId )         { return (p->pMuxes && p->pMuxes[ObjId]) ? Abc_Lit2Var(p->pMuxes[ObjId]) : -1; }
 static inline int          Gia_ObjFaninId( Gia_Obj_t * pObj, int ObjId, int n ){ return n ? Gia_ObjFaninId1(pObj, ObjId) : Gia_ObjFaninId0(pObj, ObjId);      }
@@ -573,11 +888,32 @@ static inline void         Gia_ObjFlipFaninC0( Gia_Obj_t * pObj )              {
 static inline int          Gia_ObjFaninNum( Gia_Man_t * p, Gia_Obj_t * pObj )  { if ( Gia_ObjIsMux(p, pObj) ) return 3; if ( Gia_ObjIsAnd(pObj) ) return 2; if ( Gia_ObjIsCo(pObj) ) return 1; return 0; }
 static inline int          Gia_ObjWhatFanin( Gia_Man_t * p, Gia_Obj_t * pObj, Gia_Obj_t * pFanin )  { if ( Gia_ObjFanin0(pObj) == pFanin ) return 0; if ( Gia_ObjFanin1(pObj) == pFanin ) return 1; if ( Gia_ObjFanin2(p, pObj) == pFanin ) return 2; assert(0); return -1; }
 
+// What drives an output. A combinational output has exactly one fanin, always in iDiff0, so
+// "the driver" is unambiguous and these four all reach it through fanin 0. Gia_ManPoIsConst
+// asks only whether the driver is the constant object and so is true for a primary output tied
+// to either constant, while Gia_ManPoIsConst0 and Gia_ManPoIsConst1 compare the whole driver
+// LITERAL and therefore separate the two polarities. All three index the primary-output section
+// of vCos, not vCos itself, so a flop input cannot be reached through them.
 static inline int          Gia_ManCoDriverId( Gia_Man_t * p, int iCoIndex )    { return Gia_ObjFaninId0p(p, Gia_ManCo(p, iCoIndex));                        }
 static inline int          Gia_ManPoIsConst( Gia_Man_t * p, int iPoIndex )     { return Gia_ObjFaninId0p(p, Gia_ManPo(p, iPoIndex)) == 0;                   }
 static inline int          Gia_ManPoIsConst0( Gia_Man_t * p, int iPoIndex )    { return Gia_ManIsConst0Lit( Gia_ObjFaninLit0p(p, Gia_ManPo(p, iPoIndex)) ); }
 static inline int          Gia_ManPoIsConst1( Gia_Man_t * p, int iPoIndex )    { return Gia_ManIsConst1Lit( Gia_ObjFaninLit0p(p, Gia_ManPo(p, iPoIndex)) ); }
 
+// COPY MAPS. Rebuilding a network means remembering, for each object of the old manager, what
+// it became in the new one. GIA offers three separate places to keep that mapping, and mixing
+// them within one pass is what goes wrong most often. This first group uses the object's own
+// Value field, which holds a LITERAL in the destination manager - identifier plus polarity, not
+// an address - which is why Gia_ObjCopy has to run it through Abc_Lit2Var and why the manager it
+// takes is the DESTINATION while pObj belongs to the source. Gia_ObjFanin0Copy and its siblings
+// are the rebuild idiom in one expression: resolve the fanin in the source by offset, read the
+// copy literal parked in its Value, and fold in the complement bit stored on the edge. Because
+// the whole mapping rides in the objects, this form needs no side vector and no cleanup.
+// The sentinel of this form is ~0, written by Gia_ManFillValue (giaUtil.c:L369-374) and tested
+// as if ( ~pObj->Value ) (giaDup.c:L1751-1752). Note that Gia_ManCleanValue (giaUtil.c:L351-356)
+// writes 0 instead, which is the perfectly valid literal for constant 0, so it does NOT create
+// that sentinel and the two helpers are not interchangeable before a rebuild.
+// Gia_ObjFanin2Copy inherits the third-fanin caveat from the block above: it dereferences the
+// result of Gia_ObjFanin2, which is NULL in a manager that carries no pMuxes.
 static inline Gia_Obj_t *  Gia_ObjCopy( Gia_Man_t * p, Gia_Obj_t * pObj )      { return Gia_ManObj( p, Abc_Lit2Var(pObj->Value) );                              }
 static inline int          Gia_ObjLitCopy( Gia_Man_t * p, int iLit )           { return Abc_LitNotCond( Gia_ManObj(p, Abc_Lit2Var(iLit))->Value, Abc_LitIsCompl(iLit));     }
 
@@ -585,6 +921,18 @@ static inline int          Gia_ObjFanin0Copy( Gia_Obj_t * pObj )               {
 static inline int          Gia_ObjFanin1Copy( Gia_Obj_t * pObj )               { return Abc_LitNotCond( Gia_ObjFanin1(pObj)->Value, Gia_ObjFaninC1(pObj) );     }
 static inline int          Gia_ObjFanin2Copy( Gia_Man_t * p, Gia_Obj_t * pObj ){ return Abc_LitNotCond(Gia_ObjFanin2(p, pObj)->Value, Gia_ObjFaninC2(p, pObj)); }
 
+// The second and third places are side vectors, embedded by value so they are addressed as
+// &p->vCopies and &p->vCopies2. The pair below is FRAME-INDEXED: the vector is treated as f
+// planes of Gia_ManObjNum(p) entries each, so one object has one copy per time frame, which is
+// what unrolling a sequential network needs. The four that follow are FLAT over the same
+// vCopies vector - index is the bare object identifier - and Gia_ManCleanCopyArray sizes it for
+// exactly one plane. The two patterns therefore share storage and cannot both be live in one
+// pass: a frame-indexed writer needs the vector sized for all its planes, which the flat
+// cleaner does not do. Gia_ObjCopy2Array and its two companions are a wholly independent flat
+// map over vCopies2, for passes that need to keep two mappings at once.
+// The missing-entry marker of both flat maps is -1, written by their clean helpers, which is a
+// different convention from the ~0 used by the Value form above and from the GIA_NONE and
+// GIA_VOID sentinels used inside objects. Nothing checks that a reader uses the right one.
 static inline int          Gia_ObjCopyF( Gia_Man_t * p, int f, Gia_Obj_t * pObj )               { return Vec_IntEntry(&p->vCopies, Gia_ManObjNum(p) * f + Gia_ObjId(p,pObj));      }
 static inline void         Gia_ObjSetCopyF( Gia_Man_t * p, int f, Gia_Obj_t * pObj, int iLit )  { Vec_IntWriteEntry(&p->vCopies, Gia_ManObjNum(p) * f + Gia_ObjId(p,pObj), iLit);  }
 static inline int          Gia_ObjCopyArray( Gia_Man_t * p, int iObj )                          { return Vec_IntEntry(&p->vCopies, iObj);                                          }
@@ -643,6 +991,23 @@ static inline int          Gia_ObjLutRefNum( Gia_Man_t * p, Gia_Obj_t * pObj )  
 static inline int          Gia_ObjLutRefInc( Gia_Man_t * p, Gia_Obj_t * pObj )     { assert(p->pLutRefs); return p->pLutRefs[Gia_ObjId(p, pObj)]++;  }
 static inline int          Gia_ObjLutRefDec( Gia_Man_t * p, Gia_Obj_t * pObj )     { assert(p->pLutRefs); return --p->pLutRefs[Gia_ObjId(p, pObj)];  }
 
+// TRAVERSAL IDENTIFIERS: a visited mark that costs nothing to clear. A depth-first pass needs a
+// "seen" bit per object, and clearing such a bit before every pass would be linear in the object
+// count. Instead the manager keeps a generation counter, nTravIds, and a side array pTravIds of
+// one int per object; an object counts as marked exactly when its entry EQUALS the current
+// generation. Starting a new pass is then a single increment - Gia_ManIncrementTravId
+// (giaUtil.c:L190-205), which also grows the array by doubling and zeroes the new half - and no
+// per-object work at all, so the clear is O(1) rather than O(n). The same device reappears as
+// iTimeStamp and vTimeStamps in the incremental-simulation block of the manager.
+// Gia_ObjSetTravIdPrevious writes nTravIds - 1 rather than nTravIds, which is what gives two
+// live generations at once: a pass can distinguish "reached in this round" from "reached in the
+// previous round" without a second array. The two Update forms are test-and-set: each returns 1
+// when the object was already marked and leaves it alone, otherwise marks it and returns 0, so
+// the common recursion guard is a single call rather than a test followed by a set.
+// Every member of this block asserts the identifier against nTravIdsAlloc rather than against
+// the object count, because the array is grown by that same helper and not by the appenders; an
+// object appended after the last increment is outside the allocation until the next one. The
+// ...Id forms exist so that a caller holding only an identifier need not materialize an address.
 static inline void         Gia_ObjSetTravIdCurrent( Gia_Man_t * p, Gia_Obj_t * pObj )         { assert( Gia_ObjId(p, pObj) < p->nTravIdsAlloc ); p->pTravIds[Gia_ObjId(p, pObj)] = p->nTravIds;                    }
 static inline void         Gia_ObjSetTravIdPrevious( Gia_Man_t * p, Gia_Obj_t * pObj )        { assert( Gia_ObjId(p, pObj) < p->nTravIdsAlloc ); p->pTravIds[Gia_ObjId(p, pObj)] = p->nTravIds - 1;                }
 static inline int          Gia_ObjIsTravIdCurrent( Gia_Man_t * p, Gia_Obj_t * pObj )          { assert( Gia_ObjId(p, pObj) < p->nTravIdsAlloc ); return (p->pTravIds[Gia_ObjId(p, pObj)] == p->nTravIds);          }
@@ -679,6 +1044,30 @@ static inline word *       Gia_ObjSimObj( Gia_Man_t * p, Gia_Obj_t * pObj )    {
 
 // AIG construction
 extern void Gia_ObjAddFanout( Gia_Man_t * p, Gia_Obj_t * pObj, Gia_Obj_t * pFanout );
+// THE SINGLE PLACE AN OBJECT IS BORN. Every constructor below reaches the array through this one
+// helper, which hands back the next free slot after growing the array if it is full. What it does
+// is worth reading closely, because three properties of the whole package come from these lines.
+//  - Growth is by doubling, clamped at 1 << 29 objects. When that ceiling is actually reached the
+//    function prints "Hard limit on the number of nodes (2^29) is reached. Quitting..." and calls
+//    exit(1); it does not return an error to the caller, so a client cannot catch the condition.
+//    The ceiling is not arbitrary: 1 << 29 is exactly the span of the 29-bit offset fields, so an
+//    array any larger could hold a pair of objects whose distance the encoding cannot express.
+//  - The realloc MOVES the array, and therefore every object in it. This is the reason fanins are
+//    stored as distances: a distance between two slots is unchanged by the move, whereas a stored
+//    address would be left dangling. The corollary for callers is unavoidable and unchecked - any
+//    Gia_Obj_t * held across a call that may append is invalid afterwards, which is why the
+//    identifier forms of the accessors exist and why side tables store literals, not addresses.
+//    The freshly grown tail is memset to zero, so a slot reads as an object whose offsets are both
+//    zero until a constructor writes it.
+//  - pMuxes, when present, is reallocated and zeroed in the same breath. That is what keeps a side
+//    array indexed by object identifier in step with pObjs; a side array that is not grown here
+//    has to be extended by whoever owns it.
+// The last line before the return pushes one zero onto p->vHash whenever the hash table is live,
+// which is how the invariant Vec_IntSize(&p->vHash) == Gia_ManObjNum(p) that Gia_ManHashFind
+// asserts (giaHash.c:L54-68) is maintained one object at a time. That push can itself reallocate
+// vHash, which invalidates any interior int * into it: a SECOND and quite separate hazard from the
+// object move above, and the reason the hashing layer re-runs its lookup after appending
+// (giaHash.c:L497, L552, L609). The two must not be conflated.
 static inline Gia_Obj_t * Gia_ManAppendObj( Gia_Man_t * p )  
 { 
     if ( p->nObjs == p->nObjsAlloc )
@@ -702,6 +1091,22 @@ static inline Gia_Obj_t * Gia_ManAppendObj( Gia_Man_t * p )
     if ( Vec_IntSize(&p->vHTable) ) Vec_IntPush( &p->vHash, 0 );
     return Gia_ManObj( p, p->nObjs++ );
 }
+// THE CONSTRUCTORS. Seventeen static inline functions named Gia_ManAppend* live between here and
+// Gia_ManPatchCoDriver below: this growth helper plus sixteen constructors. Only six of the
+// sixteen write an object themselves - Ci, And, XorReal, MuxReal, Buf and Co, each of them calling
+// Gia_ManAppendObj exactly once - and the other ten are wrappers that either compose several ANDs
+// (the structural forms) or fold constants before delegating (the forms whose names end in 2).
+// Two conventions hold across all sixteen. Each returns a LITERAL, always uncomplemented, formed
+// as Gia_ObjId(p, pObj) << 1, so a caller wanting the inverted edge complements the result itself.
+// And none of them consults or updates the structural hash table: canonicalization and sharing
+// are the business of the Gia_ManHash* entry points in giaHash.c, which call these to do the
+// actual writing. In particular Gia_ManAppendAnd does NO constant folding whatsoever; a reader who
+// stops at it will wrongly conclude the package cannot fold, when in truth folding lives in the
+// hashing layer (giaHash.c:L578-585) and in the 2-suffixed wrappers here.
+// Read each constructor for two things: which fields it writes, and which ordering invariant it
+// therefore establishes - the ordering being the only type tag the object has.
+// Combinational input: sets fTerm, parks GIA_NONE in iDiff0 to mark "no fanin", and uses the
+// terminal overload of iDiff1 to record this input's position in vCis, which it then appends to.
 static inline int Gia_ManAppendCi( Gia_Man_t * p )  
 { 
     Gia_Obj_t * pObj = Gia_ManAppendObj( p );
@@ -715,6 +1120,29 @@ static inline int Gia_ManAppendCi( Gia_Man_t * p )
 extern void Gia_ManQuantSetSuppAnd( Gia_Man_t * p, Gia_Obj_t * pObj );
 extern void Gia_ManBuiltInSimPerform( Gia_Man_t * p, int iObj );
 
+// Two-input AND, the workhorse. The branch below is the encoding's type tag being written: the two
+// LITERALS are compared, and both branches fill the fields so that the SMALLER literal ends up in
+// fanin 0 and the larger in fanin 1. Since an offset is the object identifier minus the fanin
+// identifier, the smaller literal yields the LARGER offset. The distinct-fanin assertion just above
+// guarantees the two variables differ, so a plain AND leaves iDiff0 > iDiff1 strictly - which is
+// what Gia_ObjIsAndReal tests and what distinguishes it from a real XOR. Comparing literals rather
+// than variables also means the polarity participates in the ordering, which is what makes the
+// form canonical for the hash table: AND(a, !b) and AND(!b, a) produce identical objects.
+// The distinct-fanin assertion is relaxed when p->fGiaSimple is set. With it relaxed, appending
+// AND(x, x) writes equal offsets, and Gia_ObjIsBuf then reports that object as a buffer - an
+// observed consequence of the encoding having no room for a separate tag, not a special case
+// handled anywhere here.
+// Four manager members, each tested simply for being set, add side effects to this one function, and
+// each is worth knowing because it changes what a field means for the rest of the pass:
+//  - p->pFanData: the object is linked into the dynamic fanout lists of both its fanins.
+//  - p->fSweeper: each fanin's fMark0/fMark1 pair becomes a two-bit saturating fanout counter -
+//    first fanout sets fMark0, any later one sets fMark1 - and fPhase is recomputed as the
+//    conjunction of the two incoming EDGE values, each fanin's phase XORed with that edge's own
+//    complement bit, rather than left as the all-zero-pattern value.
+//  - p->fBuiltInSim: fPhase is recomputed by that same expression and the object is simulated
+//    immediately through Gia_ManBuiltInSimPerform.
+//  - p->vSuppWords: support information is extended for the new object by Gia_ManQuantSetSuppAnd.
+// A pass that sets any of these owns the fields it touches for its whole duration.
 static inline int Gia_ManAppendAnd( Gia_Man_t * p, int iLit0, int iLit1 )  
 { 
     Gia_Obj_t * pObj = Gia_ManAppendObj( p );
@@ -759,6 +1187,16 @@ static inline int Gia_ManAppendAnd( Gia_Man_t * p, int iLit0, int iLit1 )
         Gia_ManQuantSetSuppAnd( p, pObj );
     return Gia_ObjId( p, pObj ) << 1;
 }
+// REAL exclusive-or: one object holding an XOR outright, as opposed to the STRUCTURAL form built
+// from several ANDs by Gia_ManAppendXor further down. The branch looks like the AND one but is not:
+// it compares VARIABLES, not literals, and it fills the fields the opposite way round, so a real
+// XOR always leaves iDiff0 < iDiff1. That inversion is the tag - it is the entirety of what
+// Gia_ObjIsXor tests - and it is why the comparison must ignore polarity: an XOR absorbs the
+// complement of either input into the output, so the two polarities of an input must not lead to
+// two different objects. The polarity is still recorded in fCompl0/fCompl1 and the caller, not this
+// function, is expected to have canonicalized it; the two assertions left commented out just below
+// are where that check would have gone, and are recorded here unchanged.
+// The counter p->nXors is what Gia_ManXorNum reports; nothing recomputes it from the objects.
 static inline int Gia_ManAppendXorReal( Gia_Man_t * p, int iLit0, int iLit1 )  
 { 
     Gia_Obj_t * pObj = Gia_ManAppendObj( p );
@@ -784,6 +1222,17 @@ static inline int Gia_ManAppendXorReal( Gia_Man_t * p, int iLit0, int iLit1 )
     p->nXors++;
     return Gia_ObjId( p, pObj ) << 1;
 }
+// REAL multiplexer, and the one kind whose object carries no trace of what it is. The twelve bytes
+// written here are indistinguishable from those of a real AND - the branch orders the two data
+// literals by VARIABLE and leaves iDiff0 > iDiff1 whichever way it goes - and the entire distinction
+// lives in the control literal parked in p->pMuxes at this object's identifier. That is why the
+// function asserts pMuxes is already allocated, why Gia_ObjIsMux needs the manager, and why
+// Gia_ObjIsAndReal has to exclude MUX-marked identifiers explicitly. Losing pMuxes turns every real
+// MUX in the network into a real AND with no error reported anywhere.
+// When the branch swaps the data literals it complements the control literal, because selecting
+// between swapped data with the same control would compute the opposite function. The parameter
+// order is (control, then-literal, else-literal), which is not the order they are stored in.
+// The counter p->nMuxes is what Gia_ManMuxNum reports.
 static inline int Gia_ManAppendMuxReal( Gia_Man_t * p, int iLitC, int iLit1, int iLit0 )  
 { 
     Gia_Obj_t * pObj = Gia_ManAppendObj( p );
@@ -814,6 +1263,12 @@ static inline int Gia_ManAppendMuxReal( Gia_Man_t * p, int iLitC, int iLit1, int
     p->nMuxes++;
     return Gia_ObjId( p, pObj ) << 1;
 }
+// Buffer: one fanin written into BOTH offsets, which makes iDiff0 == iDiff1 and is precisely the
+// condition Gia_ObjIsBuf tests. A buffer is thus not a separate kind in the encoding but an AND of
+// an edge with itself, which is why Gia_ObjIsAnd is true of it and why Gia_ObjIsAndNotBuf exists
+// at all. The complement bit is written into both fCompl fields as well, so an inverter is a buffer
+// with both bits set. p->nBufs is what Gia_ManBufNum reports and what Gia_ManForEachBuf uses to
+// decide whether iterating at all is worthwhile.
 static inline int Gia_ManAppendBuf( Gia_Man_t * p, int iLit )  
 { 
     Gia_Obj_t * pObj = Gia_ManAppendObj( p );
@@ -823,6 +1278,11 @@ static inline int Gia_ManAppendBuf( Gia_Man_t * p, int iLit )
     p->nBufs++;
     return Gia_ObjId( p, pObj ) << 1;
 }
+// Combinational output. Note the order: the driver literal is checked BEFORE the object is
+// appended, because the second assertion asks whether the driver is itself a combinational output
+// and appending first would let the new slot be inspected. fTerm is set, iDiff0 holds the single
+// fanin offset - which is what makes Gia_ObjIsCo the complement of Gia_ObjIsCi at the same fTerm -
+// and iDiff1 takes the terminal overload again, recording this output's position in vCos.
 static inline int Gia_ManAppendCo( Gia_Man_t * p, int iLit0 )  
 { 
     Gia_Obj_t * pObj;
@@ -838,6 +1298,13 @@ static inline int Gia_ManAppendCo( Gia_Man_t * p, int iLit0 )
         Gia_ObjAddFanout( p, Gia_ObjFanin0(pObj), pObj );
     return Gia_ObjId( p, pObj ) << 1;
 }
+// THE STRUCTURAL FORMS. These four add no new kind of object: they express their function in terms
+// of ANDs and inverted edges, so each call adds one object for Or, three for Mux, four for Maj and
+// three for Xor - the last by delegating to Mux. Compare them with the REAL forms above, which put
+// the same function in a single object: choosing the structural form keeps the network a pure AIG
+// that any pass can read, while choosing the real form keeps it smaller but requires every consumer
+// to handle XOR and MUX objects. Neither folds constants, so passing a constant literal here builds
+// the gate anyway; the 2-suffixed wrappers below are the folding versions.
 static inline int Gia_ManAppendOr( Gia_Man_t * p, int iLit0, int iLit1 )
 {
     return Abc_LitNot(Gia_ManAppendAnd( p, Abc_LitNot(iLit0), Abc_LitNot(iLit1) ));
@@ -860,6 +1327,19 @@ static inline int Gia_ManAppendXor( Gia_Man_t * p, int iLit0, int iLit1 )
     return Gia_ManAppendMux( p, iLit0, Abc_LitNot(iLit1), iLit1 );
 }
 
+// THE FOLDING WRAPPERS. Every name ending in 2 is the constant-folding counterpart of the plain
+// form above it, and this is the ONLY place in this file where folding happens - Gia_ManAppendAnd
+// itself never inspects its arguments for constants. Gia_ManAppendAnd2 tests for four cases that
+// need no object at all - a constant in either argument position, which accounts for two of the
+// tests, then identical arguments, then complementary arguments. Or2, Mux2, Maj2 and Xor2 reach
+// exactly those recognitions by being built from it, while Gia_ManAppendXorReal2 carries its own
+// four tests of the same shape but with XOR results - identical arguments fold to 0 and
+// complementary ones to 1 - before delegating to Gia_ManAppendXorReal. These wrappers are not the
+// hashing layer: they can decline to create an object, but they never find an existing one, so two
+// separate calls with the same inputs still produce two objects. Sharing requires Gia_ManHashAnd.
+// All of the folding is disabled when p->fGiaSimple is set, which is what makes that flag mean
+// "record exactly the gates I ask for" - and which is also how a buffer-shaped AND can arise, as
+// noted at Gia_ManAppendAnd above.
 static inline int Gia_ManAppendAnd2( Gia_Man_t * p, int iLit0, int iLit1 )  
 { 
     if ( !p->fGiaSimple )
@@ -913,6 +1393,11 @@ static inline int Gia_ManAppendXorReal2( Gia_Man_t * p, int iLit0, int iLit1 )
     return Gia_ManAppendXorReal( p, iLit0, iLit1 );
 }
 
+// Rewiring an existing output in place, the one function here that alters an object already built.
+// It is confined to combinational outputs, and its assertion is the encoding's own rule restated:
+// the new driver must have a strictly smaller identifier than the output, because a backward offset
+// cannot reach forward. Nothing here updates fanout data, reference counts or the hash table, so a
+// caller that keeps any of those has to refresh them itself.
 static inline void Gia_ManPatchCoDriver( Gia_Man_t * p, int iCoIndex, int iLit0 )  
 {
     Gia_Obj_t * pObjCo  = Gia_ManCo( p, iCoIndex );
@@ -921,6 +1406,13 @@ static inline void Gia_ManPatchCoDriver( Gia_Man_t * p, int iCoIndex, int iLit0 
     pObjCo->fCompl0 = Abc_LitIsCompl(iLit0);
 }
 
+// TERNARY SIMULATION. Three of the four values of a two-bit code, used where a signal may be
+// unknown as well as 0 or 1; the fourth code, 0, means "no value assigned yet" and is written by
+// Gia_ObjTerSimSetC below. The two helpers that follow are the ternary counterparts of inversion
+// and conjunction: Gia_XsimNotCond keeps GIA_UND unknown and otherwise flips against the edge's
+// complement bit, and Gia_XsimAndCond checks for a controlling zero on either input FIRST, so that
+// 0 AND unknown is 0 rather than unknown, which is what makes the simulation as strong as it can be
+// without case splitting.
 #define GIA_ZER 1
 #define GIA_ONE 2
 #define GIA_UND 3
@@ -943,6 +1435,14 @@ static inline int Gia_XsimAndCond( int Value0, int fCompl0, int Value1, int fCom
 }
 
 
+// Where that ternary value is kept: NOT in a field of its own, but packed into the fMark0/fMark1
+// pair, one bit each. This is a second and wholly incompatible meaning for those two bits - the
+// first being the generic user mark, and two more arriving with p->fSweeper's fanout counter and
+// with the delete marker Gia_ManDupMarked reads (giaDup.c:L1472-1476). A pass that runs ternary
+// simulation therefore owns both marks for its entire duration, and any other use of them in the
+// same pass corrupts the values silently: nothing here records which meaning is currently in force.
+// The four setters write the code and the four getters test it, so the packing itself never appears
+// in calling code; Gia_ObjTerSimSetC writes the all-zero code, which the getters read as "no value".
 static inline void Gia_ObjTerSimSetC( Gia_Obj_t * pObj ) { pObj->fMark0 = 0; pObj->fMark1 = 0;    }
 static inline void Gia_ObjTerSimSet0( Gia_Obj_t * pObj ) { pObj->fMark0 = 1; pObj->fMark1 = 0;    }
 static inline void Gia_ObjTerSimSet1( Gia_Obj_t * pObj ) { pObj->fMark0 = 0; pObj->fMark1 = 1;    }
@@ -1060,6 +1560,23 @@ static inline int Gia_AigerWriteUnsignedBuffer( unsigned char * pBuffer, int Pos
     return Pos;
 }
 
+// EQUIVALENCE CLASSES AND CHOICES. Two side arrays, both indexed by object identifier, encode the
+// candidate equivalences an equivalence-checking or sweeping pass has found: pReprs holds one
+// Gia_Rpr_t per object naming that object's class REPRESENTATIVE, and pNexts holds one int per
+// object threading the members of a class into a singly linked list. A class is therefore a chain
+// whose head is the representative and whose links are identifiers, terminated by 0 - which is a
+// legal terminator only because object 0 is the constant and can never be a class member.
+// THE SENTINEL HERE IS GIA_VOID, NOT GIA_NONE. Everything in this block that means "no
+// representative" compares against GIA_VOID, because iRepr is 28 bits wide while the offset fields
+// are 29; the two constants are not interchangeable and using the wrong one silently misclassifies.
+// Gia_ObjSetRepr asserts the representative has a SMALLER identifier than the member, so class
+// chains run in the same direction as the fanin offsets; Gia_ObjSetReprRev is the deliberate
+// exception with the assertion reversed, for passes that build classes the other way round.
+// Class membership is read as four mutually exclusive states, all derived from the two arrays
+// rather than stored: a representative is a head (no repr of its own, but a next), an object with a
+// representative and no next is a tail, an object with neither is none, and identifier 0's repr
+// being 0 marks the constant class. pSibls is a separate array for structural choices, and
+// Gia_ObjSibl returns 0 rather than asserting when the manager carries none.
 static inline Gia_Obj_t * Gia_ObjReprObj( Gia_Man_t * p, int Id )            { return p->pReprs[Id].iRepr == GIA_VOID ? NULL : Gia_ManObj( p, p->pReprs[Id].iRepr );                  }
 static inline int         Gia_ObjRepr( Gia_Man_t * p, int Id )               { return p->pReprs[Id].iRepr;                                                }
 static inline void        Gia_ObjSetRepr( Gia_Man_t * p, int Id, int Num )   { assert( Num == GIA_VOID || Num < Id ); p->pReprs[Id].iRepr = Num;          }
@@ -1099,6 +1616,20 @@ static inline int         Gia_ObjIsFailedPair( Gia_Man_t * p, int i, int k ) { a
 static inline int         Gia_ClassIsPair( Gia_Man_t * p, int i )            { assert( Gia_ObjIsHead(p, i) ); assert( Gia_ObjNext(p, i) ); return Gia_ObjNext(p, Gia_ObjNext(p, i)) <= 0;     }
 static inline void        Gia_ClassUndoPair( Gia_Man_t * p, int i )          { assert( Gia_ClassIsPair(p,i) ); Gia_ObjSetRepr(p, Gia_ObjNext(p, i), GIA_VOID); Gia_ObjSetNext(p, i, 0);       }
 
+// ITERATORS, PART ONE: the class iterators. GIA's iterators are macros that expand to the header of
+// a for loop, so the statement or block a caller writes after the macro becomes the loop body. The
+// filtering ones - every macro here whose name selects a subset - end in the idiom
+//     if ( !predicate ) {} else
+// which looks odd but is exactly right: it makes the caller's following statement the else branch,
+// so non-matching objects are skipped without the macro needing to know anything about the body, and
+// a trailing semicolon or a braced block both work. It also means a caller must not put an else of
+// their own directly after such a loop, since it would bind to this if.
+// Reading these four: ForEachConst walks the members of the constant class, ForEachClass the class
+// heads from identifier 1, ForEachClass0 the same from 0 so the constant class is included, and
+// ForEachClassReverse the heads downwards, stopping before 0. The three ClassForEachObj forms then
+// walk one class by following pNexts, and each begins with an assertion inside the for initializer -
+// an unusual but deliberate placement that makes the precondition part of the expansion: the
+// starting identifier must be a class head.
 #define Gia_ManForEachConst( p, i )                            \
     for ( i = 1; i < Gia_ManObjNum(p); i++ ) if ( !Gia_ObjIsConst(p, i) ) {} else
 #define Gia_ManForEachClass( p, i )                            \
@@ -1115,6 +1646,16 @@ static inline void        Gia_ClassUndoPair( Gia_Man_t * p, int i )          { a
     for ( assert(Gia_ObjIsHead(p, i)), iObj = Gia_ObjNext(p, Start); iObj > 0; iObj = Gia_ObjNext(p, iObj) )
 
 
+// STATIC FANOUT: one vector doing two jobs. p->vFanout is SELF-INDEXING - its first Gia_ManObjNum
+// entries are offsets INTO THE SAME VECTOR, and the fanout identifiers of every object are stored
+// past that header. So Gia_ObjFoffsetId reads object Id's offset, and Gia_ObjFanoutId adds the
+// wanted position to it and reads again from the same array; the count comes from a second vector,
+// p->vFanoutNums. Packing the lists back-to-back after their own index table is what makes this a
+// single allocation instead of one list per object, and it is why the structure is called static:
+// the lists are laid out once for a fixed network and cannot absorb a new object, unlike the
+// pFanData lists that Gia_ManAppendAnd maintains incrementally.
+// Nothing in this block validates that the vector has been built. On a manager without static
+// fanout, Vec_IntEntry on an empty vector is what reports the problem, not an assertion here.
 static inline int         Gia_ObjFoffsetId( Gia_Man_t * p, int Id )                { return Vec_IntEntry( p->vFanout, Id );                                 }
 static inline int         Gia_ObjFoffset( Gia_Man_t * p, Gia_Obj_t * pObj )        { return Gia_ObjFoffsetId( p, Gia_ObjId(p, pObj) );                      }
 static inline int         Gia_ObjFanoutNumId( Gia_Man_t * p, int Id )              { return Vec_IntEntry( p->vFanoutNums, Id );                             }
@@ -1125,6 +1666,18 @@ static inline Gia_Obj_t * Gia_ObjFanout( Gia_Man_t * p, Gia_Obj_t * pObj, int i 
 static inline void        Gia_ObjSetFanout( Gia_Man_t * p, Gia_Obj_t * pObj, int i, Gia_Obj_t * pFan )   { Vec_IntWriteEntry( p->vFanout, Gia_ObjFoffset(p, pObj) + i, Gia_ObjId(p, pFan) ); }
 static inline void        Gia_ObjSetFanoutInt( Gia_Man_t * p, Gia_Obj_t * pObj, int i, int x )           { Vec_IntWriteEntry( p->vFanout, Gia_ObjFoffset(p, pObj) + i, x );                  }
 
+// The static-fanout iterators. The first two differ only in what they hand the body, an object or an
+// identifier, and both use the (expression, 1) comma trick so that the assignment cannot terminate
+// the loop by evaluating to zero - which matters because a fanout identifier is never 0, but an
+// object address cast to int could be anything.
+// The third macro, Gia_ObjForEachFanoutStaticIndex, has no caller anywhere in src/ at this commit: a
+// tree-wide search finds only this definition. Recorded, not altered. Two observations about it, both
+// read straight off the expansion below. Its middle guard includes (Index = Vec_IntEntry(p->vFanout,
+// Id)+i) without the comma-and-1 wrapper the other two use, so the loop would stop early if that
+// computed index were ever 0. And it indexes p->vFanout by Id and adds i, which is the OFFSET header
+// entry plus a position rather than an entry of the fanout list itself, so Index is the position of
+// the fanout in the vector rather than its identifier - which is what makes the following
+// Vec_IntEntry(p->vFanout, Index) yield the identifier.
 #define Gia_ObjForEachFanoutStatic( p, pObj, pFanout, i )         \
     for ( i = 0; (i < Gia_ObjFanoutNum(p, pObj)) && (((pFanout) = Gia_ObjFanout(p, pObj, i)), 1); i++ )
 #define Gia_ObjForEachFanoutStaticId( p, Id, FanId, i )           \
@@ -1132,6 +1685,23 @@ static inline void        Gia_ObjSetFanoutInt( Gia_Man_t * p, Gia_Obj_t * pObj, 
 #define Gia_ObjForEachFanoutStaticIndex( p, Id, FanId, i, Index ) \
     for ( i = 0; (i < Gia_ObjFanoutNumId(p, Id)) && (Index = Vec_IntEntry(p->vFanout, Id)+i) && ((FanId = Vec_IntEntry(p->vFanout, Index)), 1); i++ )
 
+// MAPPING: three independent representations of "this network has been covered by LUTs or cells".
+// The first, p->vMapping, uses the same self-indexing layout as the static-fanout vector above: the
+// first Gia_ManObjNum entries are offsets into the same vector, and each LUT record found at such an
+// offset is a size followed by that many fanin identifiers. Hence the double indirection in
+// Gia_ObjLutSize and the +1 in Gia_ObjLutFanins. An offset of 0 means "not a LUT", which is
+// unambiguous because position 0 lies inside the header where no record can start. One entry past
+// the fanins holds a cell identifier, which Gia_ObjLutMuxId reads and Gia_ObjLutIsMux tests for
+// being negative, so a mapped MUX is distinguished by a sign rather than by a separate field.
+// The second, p->vMapping2, is a Vec_Wec_t: one Vec_Int_t of fanins per object, addressed directly.
+// It costs more memory than the packed form but can be edited in place, and p->vFanouts2 is its
+// fanout counterpart. The two mappings are alternatives, and Gia_ManHasMapping and
+// Gia_ManHasMapping2 are how a pass asks which one it has been handed.
+// The third, p->vCellMapping, is indexed by LITERAL rather than by object identifier - which is why
+// Gia_ManForEachCell below runs from 2 to twice the object count - so a node and its complement can
+// carry different cells. Two negative entries are reserved as markers: -1 for an inverter and -2 for
+// a buffer, tested by Gia_ObjIsCellInv and Gia_ObjIsCellBuf; anything else positive is an offset in
+// the same self-indexing style as vMapping.
 static inline int         Gia_ManHasMapping( Gia_Man_t * p )                { return p->vMapping != NULL;                                                   }
 static inline int         Gia_ObjIsLut( Gia_Man_t * p, int Id )             { return Vec_IntEntry(p->vMapping, Id) != 0;                                    }
 static inline int         Gia_ObjLutSize( Gia_Man_t * p, int Id )           { return Vec_IntEntry(p->vMapping, Vec_IntEntry(p->vMapping, Id));              }
@@ -1157,6 +1727,21 @@ static inline int *       Gia_ObjCellFanins( Gia_Man_t * p, int iLit )      { re
 static inline int         Gia_ObjCellFanin( Gia_Man_t * p, int iLit, int i ){ return Gia_ObjCellFanins(p, iLit)[i];                                         }
 static inline int         Gia_ObjCellId( Gia_Man_t * p, int iLit )          { return Gia_ObjCellFanins(p, iLit)[Gia_ObjCellSize(p, iLit)];                  }
 
+// ITERATORS, PART TWO: the mapping iterators, thirteen macros in three groups matching the three
+// representations above. Each group has the same shape - one macro to walk the mapped objects and
+// one or more to walk the fanins of one of them - and all of them iterate over IDENTIFIERS, never
+// over objects, except Gia_LutForEachFaninObj which materializes the fanin object for the body.
+// Of the walkers that range over object identifiers, Gia_ManForEachLut and Gia_ManForEachLut2 start
+// at 1 to skip the constant, and Gia_ManForEachLutReverse and Gia_ManForEachLut2Reverse stop at
+// i > 0 and so skip it as well. Gia_ManForEachCell is the exception that starts at 2 and runs to
+// twice the object count, because the cell map is indexed by literal and literals 0 and 1 are the
+// constants.
+// Gia_LutForEachFaninIndex exposes the position of the fanin inside p->vMapping as well as its
+// identifier, for a caller that means to overwrite it; note that, exactly as with the static-fanout
+// index macro above, that assignment sits unguarded in the loop condition and a computed index of 0
+// would end the loop - reachable only if the mapping header were malformed, since a record never
+// starts at 0. The Lut2Vec pair walks a caller-supplied list of identifiers rather than the whole
+// network, and its guard is the entry pointer itself, so a null entry would stop it.
 #define Gia_ManForEachLut( p, i )                                       \
     for ( i = 1; i < Gia_ManObjNum(p); i++ ) if ( !Gia_ObjIsLut(p, i) ) {} else
 #define Gia_ManForEachLutReverse( p, i )                                \
@@ -1190,6 +1775,41 @@ static inline int         Gia_ObjCellId( Gia_Man_t * p, int iLit )          { re
 ///                      MACRO DEFINITIONS                           ///
 ////////////////////////////////////////////////////////////////////////
 
+// ITERATORS, PART THREE: walking the network. Everything from here to the end of the section is a
+// for-loop header, so the caller's next statement or block becomes the body. Three conventions run
+// through the whole set and repay knowing before reading any individual macro.
+//   THE FILTER IDIOM. A macro that visits a subset ends in "if ( !predicate ) {} else", which makes
+// the caller's body the else branch and skips everything else. A consequence: an else written
+// immediately after such a loop would bind to that if, so a body that needs a trailing else must be
+// braced.
+//   THE ASSIGNMENT-AS-GUARD IDIOM. Most of these put the assignment that hands the body its object
+// inside the loop condition, so iteration would stop if the assigned value were ever zero. That is
+// safe here for a specific reason in each case - Gia_ManObj returns an address inside the array and
+// so is never null, a combinational-input or -output identifier is never 0 because object 0 is the
+// constant - and not because the pattern is generally sound. Where no such guarantee exists the
+// macros wrap the assignment as (expr, 1) instead; compare Gia_ManForEachCoDriverId with
+// Gia_ManForEachCoId.
+//   OBJECTS VERSUS IDENTIFIERS. Nearly every walker comes in both forms, and the Id form is not just
+// a convenience: an identifier stays valid across an append while a Gia_Obj_t * does not, for the
+// reason spelled out at Gia_ManAppendObj. A loop that may add objects to the network it is walking
+// wants the Id form.
+// Individual points that are easy to misread:
+//  - Gia_ManForEachObjReverse bounds at i >= 0 and so DOES visit the constant object, whereas
+//    Gia_ManForEachObjReverse1, Gia_ManForEachAndReverse and Gia_ManForEachAndReverseId bound at
+//    i > 0 and skip it. The forward walkers make the same distinction through their start value.
+//  - Gia_ManForEachBuf disables itself: its start is Gia_ManBufNum(p) ? 0 : p->nObjs, so on a
+//    manager with no buffers the loop body never runs and nothing is scanned. Gia_ManForEachBufId
+//    has no such shortcut and always walks the whole array.
+//  - The AND walkers start at 0 rather than 1; the constant object is excluded by the predicate
+//    rather than by the bound, since Gia_ObjIsAnd is false for it.
+//  - Gia_ManForEachMux and Gia_ManForEachMuxId filter on Gia_ObjIsMuxId and therefore report nothing
+//    at all in a manager that carries no pMuxes, rather than reporting an error.
+//  - The terminal walkers go through vCis and vCos, so they visit in construction order, and the Pi,
+//    Po, Ro and Ri forms are range slices of those same two lists - which is once again why the
+//    append order matters. Gia_ManForEachRiRo advances both halves of every register in lockstep.
+//  - The ...Vec forms walk a caller-supplied list of identifiers instead of the whole network, and
+//    Gia_ManForEachObjVecLit walks a list of LITERALS, handing the body the object and its polarity
+//    separately.
 #define Gia_ManForEachObj( p, pObj, i )                                 \
     for ( i = 0; (i < p->nObjs) && ((pObj) = Gia_ManObj(p, i)); i++ )
 #define Gia_ManForEachObj1( p, pObj, i )                                \
@@ -1261,6 +1881,13 @@ static inline int         Gia_ObjCellId( Gia_Man_t * p, int iLit )          { re
 #define Gia_ManForEachRoToRiVec( vRoIds, p, pObj, i )                   \
     for ( i = 0; (i < Vec_IntSize(vRoIds)) && ((pObj) = Gia_ObjRoToRi(p, Gia_ManObj(p, Vec_IntEntry(vRoIds, i)))); i++ )
 
+// The box-aware walkers. These four are the only consumers of the four boundary indices declared in
+// the manager, and they exist so that a pass over a network with hierarchy boxes can visit the logic
+// outside the boxes without first constructing a filtered list. Each simply replaces the usual bound
+// with one of those indices, so their correctness rests entirely on those fields having been filled;
+// on a manager where they are still zero the two object walkers and the combinational-input walker
+// visit nothing, while Gia_ManForEachCoWithBoxes visits every combinational output because its upper
+// bound is the size of vCos rather than one of the indices.
 #define Gia_ManForEachObjWithBoxes( p, pObj, i )                        \
     for ( i = p->iFirstAndObj; (i < p->iFirstPoObj) && ((pObj) = Gia_ManObj(p, i)); i++ )
 #define Gia_ManForEachObjReverseWithBoxes( p, pObj, i )                 \
