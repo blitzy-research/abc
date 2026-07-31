@@ -70,9 +70,13 @@ rather than deduced from the declarations, using the repository's default toolch
 `x86_64` Linux, the `CC := gcc` of `Makefile:L2`, with no version pinned anywhere in the build:
 
 ```bash
-printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu %%zu %%zu\\n",sizeof(Gia_Obj_t),sizeof(Gia_Man_t),sizeof(Gia_Rpr_t),sizeof(Gia_Plc_t));return 0;}\n' > /tmp/probe.c
-gcc -I src -DABC_USE_STDINT_H=1 -o /tmp/probe /tmp/probe.c -lm && /tmp/probe
+d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT
+printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu %%zu %%zu\\n",sizeof(Gia_Obj_t),sizeof(Gia_Man_t),sizeof(Gia_Rpr_t),sizeof(Gia_Plc_t));return 0;}\n' > "$d/probe.c"
+gcc -I src -DABC_USE_STDINT_H=1 -o "$d/probe" "$d/probe.c" -lm && "$d/probe"
 ```
+
+The workspace is a fresh directory from `mktemp -d`, and the trap removes it on exit, so nothing is
+written to a predictable shared path.
 
 It prints `12 1136 4 4`. One object is therefore twelve bytes, and one manager — the whole
 bookkeeping structure, whatever the graph size — is 1136 bytes. There is no per-object allocation
@@ -159,15 +163,19 @@ graph LR
     SIBS["aig, hop, ioa, ivy, miniaig, saig"]
     CMD --> NTK
     CMD --> GIA
-    NTK -- "&get - Gia_ManFromAig" --> GIA
-    GIA -- "&put - Gia_ManToAig" --> NTK
+    NTK -- "&get - three routes, see the table above" --> GIA
+    GIA -- "&put - three routes, see the table above" --> NTK
     FRAME --- GIA
     GIA -.- SIBS
 ```
 
 Diagram: GIA's position in ABC. From `src/base/main/mainInt.h:L118`,
 `src/base/abci/abc.c:L1230-1231`, `src/aig/gia/giaAig.h:L53`, `src/aig/gia/giaAig.h:L57` and the
-directory listing of `src/aig/`.
+directory listing of `src/aig/`. The two crossing arrows name the commands and not a conversion
+function, because neither command has one: `&get` reaches `Gia_Man_t` by `Abc_NtkAigToGia` on its
+first route and by `Gia_ManFromAig` on the other two, and `&put` leaves it by
+`Abc_NtkFromMappedGia`, `Abc_NtkFromCellMappedGia` or `Gia_ManToAig`. The two tables above give each
+route with its locator.
 
 ## 3. Package Map and Reading Guide
 
@@ -385,8 +393,8 @@ subsystem or another and are irrelevant to the representation. Grouped by role:
 | Traversal identifiers | `src/aig/gia/gia.h:L329-330` | `pTravIds` and `nTravIdsAlloc`, the out-of-object mark scheme of section 7 |
 | Names and user identifiers | `src/aig/gia/gia.h:L331-344` | The three name vectors, the user-assigned identifier vectors, the original-identifier vectors, `vClockDoms`, `vTiming` |
 | Sub-managers and statistics | `src/aig/gia/gia.h:L345-356` | `pManTime`, `pLutLib`, `nHashHit`, `nHashMiss`, four generic user-data slots, `nAnd2Delay`, `fVerbose`, `MappedArea`, `MappedDelay` |
-| Bit-parallel simulation | `src/aig/gia/gia.h:L357-384` | The block introduced by the comment at `src/aig/gia/gia.h:L357`; none of its 14 declaration lines carries a comment |
-| Incremental simulation | `src/aig/gia/gia.h:L385-396` | The block introduced at `src/aig/gia/gia.h:L385`; none of its 4 declaration lines carries a comment |
+| Bit-parallel simulation | `src/aig/gia/gia.h:L357-384` | The block introduced by the comment at `src/aig/gia/gia.h:L357`; all 14 of its declaration lines `src/aig/gia/gia.h:L371-384` carry a comment, six of them recording that the member is not determinable from the source |
+| Incremental simulation | `src/aig/gia/gia.h:L385-396` | The block introduced at `src/aig/gia/gia.h:L385`; all 4 of its declaration lines `src/aig/gia/gia.h:L393-396` carry a comment |
 | Truth tables, balancing, quantification | `src/aig/gia/gia.h:L397-425` | Small-function truth tables, the balancing scratch vectors, and the existential-quantification block |
 | Retiming and box iteration | `src/aig/gia/gia.h:L426-448` | `vStopsF` and `vStopsB`; then the four box-boundary indices under the comment at `src/aig/gia/gia.h:L434` |
 | ISOP and MFFC scratch | `src/aig/gia/gia.h:L449-453` | `vTTISOPs`, `vTTLut`, `vMFFCsInfo`, `vMFFCsLuts`, `vLutsRankings` |
@@ -864,9 +872,9 @@ graph LR
     O5["object id 5"]
     O9["object id 9"]
     O0["0 terminates the chain"]
-    HT -->|"Gia_ManHashFind L95"| O5
-    O5 -->|"p->vHash entry 5"| O9
-    O9 -->|"p->vHash entry 9"| O0
+    HT -->|"pPlace starts at the vHTable entry L85"| O5
+    O5 -->|"p->vHash entry 5 L90"| O9
+    O9 -->|"p->vHash entry 9 L90"| O0
 ```
 
 Diagram: bucket heads in `p->vHTable`, next links in `p->vHash` indexed by object identifier.
@@ -877,27 +885,27 @@ From `src/aig/gia/giaHash.c:L83-97`.
 ```mermaid
 flowchart TD
     A["Gia_ManHashAnd iLit0 iLit1"] --> B{"constant literal or equal or complementary"}
-    B -->|"yes L779-786"| C["return folded literal"]
+    B -->|"yes L718-725"| C["return folded literal"]
     B -->|"no"| D{"p->fGiaSimple"}
-    D -->|"yes L787-791"| E["assert empty vHTable then Gia_ManAppendAnd"]
+    D -->|"yes L726-730"| E["assert empty vHTable then Gia_ManAppendAnd"]
     D -->|"no"| F{"every 256th object and table under half the AND count"}
-    F -->|"yes L792-793"| G["Gia_ManHashResize"]
+    F -->|"yes L731-732"| G["Gia_ManHashResize"]
     F -->|"no"| H{"p->fAddStrash"}
     G --> H
-    H -->|"yes L794-796"| I{"Gia_ManAddStrash returned an object"}
-    H -->|"no"| J["swap so iLit0 is less than iLit1 L800-801"]
-    I -->|"yes L797-798"| C
+    H -->|"yes L733-737"| I{"Gia_ManAddStrash returned an object"}
+    H -->|"no"| J["swap so iLit0 is less than iLit1 L739-740"]
+    I -->|"yes L736-737"| C
     I -->|"no"| J
-    J --> K["pPlace = Gia_ManHashFind L803"]
-    K --> K1["Gia_ManHashOne key from iLit0 iLit1 iLitC L84-92"]
-    K1 --> K2["Key % TableSize picks the vHTable bucket L95"]
-    K2 --> K3["walk p->vHash next links until match or zero L100-103"]
+    J --> K["pPlace = Gia_ManHashFind L742"]
+    K --> K1["Gia_ManHashOne key from iLit0 iLit1 iLitC L76-81"]
+    K1 --> K2["Key % TableSize picks the vHTable bucket L85"]
+    K2 --> K3["walk p->vHash next links until match or zero L90-95"]
     K3 --> L{"slot non zero"}
-    L -->|"hit L804-808"| M["nHashHit++ then return Abc_Var2Lit"]
-    L -->|"miss L809"| N{"vHash has spare capacity L810"}
-    N -->|"yes"| O["write through pPlace after Gia_ManAppendAnd L811"]
-    N -->|"no"| P["append then re-run Gia_ManHashFind L814-817"]
-    O --> Q["return Abc_Var2Lit L819"]
+    L -->|"hit L743-747"| M["nHashHit++ then return Abc_Var2Lit"]
+    L -->|"miss L748"| N{"vHash has spare capacity L749"}
+    N -->|"yes"| O["write through pPlace after Gia_ManAppendAnd L750"]
+    N -->|"no"| P["append then re-run Gia_ManHashFind L753-756"]
+    O --> Q["return Abc_Var2Lit L758"]
     P --> Q
 ```
 
@@ -1011,16 +1019,16 @@ sequenceDiagram
     participant Pass as Gia_ManDup
     participant Old as source manager p
     participant New as new manager pNew
-    Pass->>New: Gia_ManStart Gia_ManObjNum p - L725
-    Pass->>Old: Gia_ManConst0 p Value set to 0 - L730
-    loop Gia_ManForEachObj1 over p - L731
-        Pass->>Old: dispatch Buf then And then Ci then Co - L733 to L744
+    Pass->>New: Gia_ManStart Gia_ManObjNum p - L751
+    Pass->>Old: Gia_ManConst0 p Value set to 0 - L756
+    loop Gia_ManForEachObj1 over p - L757
+        Pass->>Old: dispatch Buf then And then Ci then Co - L759 to L770
         Pass->>Old: Gia_ObjFanin0Copy reads the fanin Value
         Pass->>New: Gia_ManAppendBuf or Gia_ManAppendAnd or Gia_ManAppendCi or Gia_ManAppendCo
         New-->>Pass: literal of the new object
         Pass->>Old: store that literal into this object Value
     end
-    Pass->>New: Gia_ManSetRegNum Gia_ManRegNum p - L746
+    Pass->>New: Gia_ManSetRegNum Gia_ManRegNum p - L772
 ```
 
 Diagram: the iteration-order copy protocol, traced against `src/aig/gia/giaDup.c:L746-776`. There is
@@ -1036,28 +1044,52 @@ sequenceDiagram
     participant Pass as Gia_ManDupDfs
     participant Old as source manager p
     participant New as new manager pNew
-    Pass->>New: Gia_ManStart Gia_ManObjNum p - L1763
-    Pass->>Old: Gia_ManFillValue p writes ~0 into every Value - L1766
-    Pass->>Old: Gia_ManConst0 p Value set to 0 - L1767
-    loop Gia_ManForEachCi over p - L1768
+    Pass->>New: Gia_ManStart Gia_ManObjNum p - L1871
+    Pass->>Old: Gia_ManFillValue p writes ~0 into every Value - L1874
+    Pass->>Old: Gia_ManConst0 p Value set to 0 - L1875
+    loop Gia_ManForEachCi over p - every Ci unconditionally - L1876
         Pass->>New: Gia_ManAppendCi
-        New-->>Pass: literal stored into this Ci Value - L1769
+        New-->>Pass: literal stored into this Ci Value - L1877
     end
-    loop Gia_ManForEachCo over p - L1770
-        Pass->>Old: Gia_ManDupDfs_rec on Gia_ObjFanin0 - L1771
-        Note over Pass,Old: recursion returns at once when ~Value is true - L1751
+    loop Gia_ManForEachCo over p - L1878
+        Pass->>Old: Gia_ManDupDfs_rec on Gia_ObjFanin0 - L1879
+        Note over Pass,Old: recursion returns at once when ~Value is true - L1859-L1860
     end
-    loop Gia_ManForEachCo over p - L1772
+    loop Gia_ManForEachCo over p - every Co unconditionally - L1880
         Pass->>New: Gia_ManAppendCo Gia_ObjFanin0Copy
-        New-->>Pass: literal stored into this Co Value - L1773
+        New-->>Pass: literal stored into this Co Value - L1881
     end
-    Pass->>New: Gia_ManSetRegNum Gia_ManRegNum p - L1774
+    Pass->>New: Gia_ManSetRegNum Gia_ManRegNum p - L1882
 ```
 
 Diagram: the recursive copy protocol, traced against `src/aig/gia/giaDup.c:L1866-1887` with the
 recursion body at `src/aig/gia/giaDup.c:L1857-1865`. `Gia_ManDupDfs_rec` appends its two fanins before
 itself `src/aig/gia/giaDup.c:L1862-1864`, so the new array still comes out topologically ordered even
 though the walk is not in index order.
+
+Two properties of that recursion bound what it can be used on, and both are visible in the four lines
+of its body. The first is what survives. Every internal object goes through one unconditional
+`Gia_ManAppendAnd` `src/aig/gia/giaDup.c:L1864`, guarded by `assert( Gia_ObjIsAnd(pObj) )`
+`src/aig/gia/giaDup.c:L1861` — and `Gia_ObjIsAnd` is true of buffers, real XOR objects and real MUX
+objects as well as plain ANDs `src/aig/gia/gia.h:L780`, so the assertion admits all four while the
+constructor recreates only one. The interior it preserves is therefore plain-AND only, and each other
+kind fares differently: a real XOR loses the `iDiff0 < iDiff1` pattern that marked it, because
+`Gia_ManAppendAnd` normalizes the ordering `src/aig/gia/gia.h:L1259`; a real MUX loses its third
+fanin, because `pNew->pMuxes` is never allocated on this path and `Gia_ObjFanin2Copy` is never read;
+and a buffer, whose two fanin literals name one variable
+`src/aig/gia/gia.h:L1392-1393`, reaches the distinct-fanin assertion inside that constructor
+`src/aig/gia/gia.h:L1258`, which rejects it unless `p->fGiaSimple` is set. The precondition this
+amounts to is a plain-AIG interior: a source whose internal objects are all plain ANDs. It is not
+checked as such anywhere, and the observed failure mode for a buffer is the assertion, which the
+shipped build leaves live — `OPTFLAGS ?= -g -O` at `Makefile:L67` defines no `NDEBUG`.
+
+The second is depth. The recursion is not iterative and carries no explicit stack, so its call depth
+follows the logic depth of the cone being copied `src/aig/gia/giaDup.c:L1862-1863`. The code sets no
+limit and the source records no measurement, so nothing here states what depth is safe.
+
+For a source that does hold buffers or real XOR and MUX objects, the structure-preserving variant is
+`Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1539`, whose four-way dispatch — buffer, then real XOR, then
+real MUX, then plain AND `src/aig/gia/giaDup.c:L1563-1573` — is set out further down this subsection.
 
 **Two entry points define the family's semantics, and they are not equivalent.**
 
@@ -1125,17 +1157,17 @@ stateDiagram-v2
     state "appending, no hash table" as Building
     state "appending, hash table live" as Hashed
     state "copy returned by a Dup entry point" as Copied
-    [*] --> Empty : Gia_ManStart giaMan.c L73
+    [*] --> Empty : Gia_ManStart giaMan.c L68
     Empty --> Building : Gia_ManAppendCi and friends gia.h L1212
-    Empty --> Hashed : Gia_ManHashStart
-    Building --> Hashed : Gia_ManHashStart
-    Hashed --> Building : Gia_ManHashStop
-    Building --> Building : Gia_ManSetRegNum giaMan.c L843
-    Hashed --> Hashed : Gia_ManSetRegNum giaMan.c L843
+    Empty --> Hashed : Gia_ManHashStart giaHash.c L177
+    Building --> Hashed : Gia_ManHashStart giaHash.c L177
+    Hashed --> Building : Gia_ManHashStop giaHash.c L208
+    Building --> Building : Gia_ManSetRegNum giaMan.c L826
+    Hashed --> Hashed : Gia_ManSetRegNum giaMan.c L826
     Building --> Copied : Gia_ManCleanup giaScl.c L84
     Hashed --> Copied : Gia_ManCleanup giaScl.c L84
-    Copied --> [*] : Gia_ManStop frees each manager giaMan.c L116
-    Building --> [*] : Gia_ManStop giaMan.c L116
+    Copied --> [*] : Gia_ManStop frees each manager giaMan.c L109
+    Building --> [*] : Gia_ManStop giaMan.c L109
 ```
 
 Diagram: the order in which a client conventionally calls the lifecycle entry points, drawn from
@@ -1144,8 +1176,8 @@ Diagram: the order in which a client conventionally calls the lifecycle entry po
 sequenced as the client recipe at `readmeaig:L29-46` prescribes. The states name what the manager
 holds at each point; they are a description of the conventional sequence, not a mode the manager
 records. `Gia_ManSetRegNum` is drawn as a self-transition because it writes one field and leaves
-everything else as it was. The two hash-table transitions carry the function name alone; their
-locators are the `giaHash.c` entries listed above.
+everything else as it was. Every transition label carries the line its function is defined on, so each
+one can be checked against the same locators listed above.
 
 **What the code enforces, and what it does not.** Nothing in `Gia_Man_t` stores a phase, so the
 manager cannot reject an out-of-order call on the strength of a phase. The one enforcement on this
@@ -1225,9 +1257,12 @@ cited where one exists.
    `src/aig/gia/gia.h:L746-747`.
 9. **An object address handed to `Gia_ObjId` lies inside the live array,** asserted as
    `p->pObjs <= pObj && pObj < p->pObjs + p->nObjs` `src/aig/gia/gia.h:L745`.
-10. **`p->nObjs` never exceeds `p->nObjsAlloc`, and neither exceeds `1 << 29`.** The growth path runs
-    only on equality, caps the new size, and refuses to continue at the ceiling
-    `src/aig/gia/gia.h:L1164-1181`.
+10. **`p->nObjs` never exceeds `p->nObjsAlloc`; and `1 << 29` bounds only what growth produces.** The
+    growth path runs on equality, caps the new size, and refuses to continue at the ceiling
+    `src/aig/gia/gia.h:L1164-1181`. Both the cap and the refusal sit inside that capacity branch, and
+    the only check on the initial capacity is `assert( nObjsMax > 0 )` `src/aig/gia/giaMan.c:L71`, so
+    a manager started above `1 << 29` never reaches the ceiling test — the second half of this
+    invariant holds of managers that grew into their size, not of every manager.
 11. **While the hash table is live, `p->vHash` holds exactly one entry per object.**
     `Gia_ManHashFind` asserts `Vec_IntSize(&p->vHash) == Gia_ManObjNum(p)`
     `src/aig/gia/giaHash.c:L86`, and `Gia_ManAppendObj` maintains it by pushing one zero per new
@@ -1288,12 +1323,15 @@ Each entry below is a place where correct-looking code is wrong.
 5. **`Gia_ManAppendAnd` does not fold constants.** Passing it a constant literal creates an AND with
    a constant fanin. The folding forms are `Gia_ManAppendAnd2` `src/aig/gia/gia.h:L1466-1480` and its
    siblings, and the hashing entry points `src/aig/gia/giaHash.c:L718-725`.
-6. **`Gia_ManDup` and `Gia_ManDupMarked` are not interchangeable, and their banners do not say so.**
-   `Gia_ManDup` `src/aig/gia/giaDup.c:L746` has no real-XOR and no real-MUX branch, so those objects
-   are rebuilt as plain ANDs and lose their encoding; `Gia_ManDupMarked`
-   `src/aig/gia/giaDup.c:L1539` preserves them. Both banners carry the identical `Synopsis` text
-   `[Duplicates AIG without any changes.]`, at `src/aig/gia/giaDup.c:L711` and
-   `src/aig/gia/giaDup.c:L1500`, so the difference is not visible from the banners.
+6. **`Gia_ManDup` and `Gia_ManDupMarked` are not interchangeable, and neither the names nor the
+   `Synopsis` lines separate them.** `Gia_ManDup` `src/aig/gia/giaDup.c:L746` has no real-XOR and no
+   real-MUX branch, so those objects are rebuilt as plain ANDs and lose their encoding;
+   `Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1539` preserves them. The two banners carry the identical
+   `Synopsis` text `[Duplicates AIG without any changes.]`, at `src/aig/gia/giaDup.c:L711` and
+   `src/aig/gia/giaDup.c:L1500`, so a reader scanning names and synopses alone sees two functions that
+   look like the same thing. The distinction is stated in the `Description` of each banner —
+   `src/aig/gia/giaDup.c:L713-739` and `src/aig/gia/giaDup.c:L1502-1532` — so it is documented where a
+   reader who opens the banner will find it, and invisible only to one who reads the one-line summary.
 7. **`Gia_ManCleanup` returns a new manager and does not free its input**
    `src/aig/gia/giaScl.c:L84-88`. The caller owns two managers after the call.
 8. **`Gia_ManFillValue` and `Gia_ManCleanValue` are not interchangeable.** `~0`
@@ -1353,9 +1391,9 @@ Each entry below is a place where correct-looking code is wrong.
 
 ## 12. Limitations
 
-**A manager holds at most 2^29 objects, and the limit is fatal rather than reported.** The growth
-path caps the new size at `1 << 29` `src/aig/gia/gia.h:L1166` and, once the count reaches that value,
-ends the process `src/aig/gia/gia.h:L1168`:
+**Growth stops at 2^29 objects, and stopping is fatal rather than reported.** The growth path caps
+the new size at `1 << 29` `src/aig/gia/gia.h:L1166` and, once the count reaches that value, ends the
+process `src/aig/gia/gia.h:L1168`:
 
 ```c
             printf( "Hard limit on the number of nodes (2^29) is reached. Quitting...\n" ), exit(1);
@@ -1365,12 +1403,22 @@ There is no return code and no error path for a caller to handle. The limit foll
 width: an offset has 29 bits `src/aig/gia/gia.h:L152`, and `GIA_NONE` `src/aig/gia/gia.h:L66` consumes
 the largest of the values those bits can hold.
 
+Where the limit is enforced is narrower than that reasoning suggests, and the difference matters to a
+caller. Both the cap and the ceiling test are inside the `p->nObjs == p->nObjsAlloc` branch
+`src/aig/gia/gia.h:L1164`, so they run only when the array has to grow. `Gia_ManStart` asserts only
+`assert( nObjsMax > 0 )` `src/aig/gia/giaMan.c:L71` and never compares its argument against
+`1 << 29`, so a manager allocated above the ceiling in one call is never tested against it. What the
+code enforces is therefore a ceiling on *growth*, not a checked invariant on manager size; the
+29-bit offset field still bounds what such a manager could address, but nothing in the package
+reports the discrepancy.
+
 **Equivalence classes address at most 2^28 − 1 representatives.** `Gia_Rpr_t::iRepr` is 28 bits wide
 `src/aig/gia/gia.h:L92`, with `GIA_VOID` `src/aig/gia/gia.h:L67` occupying its top value. The
 representative space is therefore half the object space, so a manager can hold objects that no
 representative field can name.
 
-**A graph is a whole; the package's own transformations are copies.** The offsets are backward, so
+**Restructuring a graph is not expressible through the declared interface, so rebuilding is the
+common style.** The offsets are backward, so
 inserting an object between two existing ones is not expressible without rewriting the offsets that
 cross it, and the constructors only ever append `src/aig/gia/gia.h:L1183`. The header offers exactly
 one function for rewiring an existing edge, `Gia_ManPatchCoDriver` `src/aig/gia/gia.h:L1534-1540`,
@@ -1380,10 +1428,13 @@ call sites assign the offset fields directly instead, inside the package at
 `src/aig/gia/giaFront.c:L76`, `src/aig/gia/giaEquiv.c:L892` and `src/aig/gia/giaSimBase.c:L2970`, and
 outside it at `src/sat/bmc/bmcChain.c:L264`, `src/base/wln/wlnRead.c:L2646`,
 `src/base/abc/abcHieGia.c:L277` and `src/proof/acec/acecXor.c:L453`. The full list, with what each
-one does, is in [`./ENCODING.md`](./ENCODING.md#7-terminal-overload). What remains true is that the
-package's *own* transformations are copies: that is what makes the ninety duplication entry points in
-`src/aig/gia/giaDup.c` its main working surface, and what makes `Gia_ManCleanup`
-`src/aig/gia/giaScl.c:L84-88` return a manager rather than modify one.
+one does, is in [`./ENCODING.md`](./ENCODING.md#7-terminal-overload). So the accurate statement is
+narrower than "the package only copies": rebuilding is the *common* style rather than the only one,
+and it is the style the duplication and cleanup family uses without exception — which is what makes
+the ninety duplication entry points in `src/aig/gia/giaDup.c` the main working surface, and what makes
+`Gia_ManCleanup` `src/aig/gia/giaScl.c:L84-88` return a manager rather than modify one. In-place edits
+happen, but only through code that reaches past the declared accessors into the fields, or through the
+one narrow patching function the header does declare.
 
 **A manager is not shareable across threads while a pass is running.** The central header declares no
 lock, no atomic and no thread-local storage: `src/aig/gia/gia.h` contains no reference to `pthread` or
@@ -1418,10 +1469,13 @@ The twelve items below were found while writing this document. They are recorded
    `//    ABC_FREE( p->pMapping );` at `src/aig/gia/giaMan.c:L197`, between two live releases. The
    line was left byte-identical.
 5. **A macro with no callers.** `Gia_ObjForEachFanoutStaticIndex`
-   `src/aig/gia/gia.h:L1825-1826` is used nowhere in `src/`; a tree-wide search returns one hit, its
-   own definition. Its loop guard is `&& (Index = Vec_IntEntry(p->vFanout, Id)+i) &&`, a conjunct that
-   is false when the computed index is 0, which ends the iteration. The macro was not changed or
-   removed.
+   `src/aig/gia/gia.h:L1825-1826` is never invoked anywhere in `src/`. A tree-wide search for the name
+   returns four lines, and separating them by form is what makes the claim checkable: exactly one is
+   code, the `#define` itself `src/aig/gia/gia.h:L1825`; the other three are prose that this
+   documentation added, being the explanatory comment at `src/aig/gia/gia.h:L1818` and two mentions in
+   this file, in the iterator catalogue of section 7 and in this item. No expansion site exists. Its
+   loop guard is `&& (Index = Vec_IntEntry(p->vFanout, Id)+i) &&`, a conjunct that is false when the
+   computed index is 0, which ends the iteration. The macro was not changed or removed.
 6. **A manager field that is written only from outside the package and never read.**
    `Vec_Bit_t *    vPolars;` `src/aig/gia/gia.h:L384` is released by
    `Vec_BitFreeP( &p->vPolars );` `src/aig/gia/giaMan.c:L125`. Nothing inside `src/aig/gia/` assigns

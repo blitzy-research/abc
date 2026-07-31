@@ -119,10 +119,10 @@ struct Gia_Plc_t_
 //    bit (fTerm), the GIA_NONE sentinel, and the relative ORDERING of the two offset
 //    fields, with p->pMuxes consulted to separate a real MUX from a plain AND. See
 //    Gia_ObjIsTerm .. Gia_ManObjIsConst0.
-//  * Fanins are neither pointers nor absolute indices. They are backward relative offsets
-//    measured in whole Gia_Obj_t units and resolved by subtraction -- see Gia_ObjFanin0
-//    and Gia_ObjFaninId0. A backward offset can only name an earlier object, so the array
-//    is topologically ordered by construction and cannot express a forward reference.
+//  * Fanins are neither pointers nor absolute indices, but backward relative offsets in
+//    whole Gia_Obj_t units, resolved by subtraction -- see Gia_ObjFanin0 and
+//    Gia_ObjFaninId0. The field is unsigned and only subtracted, so no offset reaches
+//    forward; a positive, well-formed one lands earlier, ordering the array topologically.
 //  * An offset is position independent, so the stored fanins stay correct across the
 //    ABC_REALLOC inside Gia_ManAppendObj, which may move the whole array. Absolute
 //    pointers would not. The observable consequence is that a Gia_Obj_t * held across an
@@ -148,7 +148,7 @@ struct Gia_Obj_t_
     // each. Its all-ones value is reserved as GIA_NONE and means "no fanin" -- which is how
     // a combinational input and the constant-0 object are told apart without a type tag --
     // so the largest ordinary offset the field can express is 2^29 - 2. The manager's own
-    // ceiling of 2^29 objects is enforced separately, in Gia_ManAppendObj.
+    // ceiling of 2^29 objects is enforced separately, on Gia_ManAppendObj's growth path.
     unsigned       iDiff0 :  29;  // the diff of the first fanin
     // Inversion carried on the EDGE to fanin 0, not on the fanin object. One inversion bit
     // per edge is what lets a single node type (a two-input conjunction) express any Boolean
@@ -162,10 +162,10 @@ struct Gia_Obj_t_
     // marker Gia_ManDupMarked consumes and clears (giaDup.c:L1557-1561). Two passes cannot
     // hold it at once.
     unsigned       fMark0 :   1;  // first user-controlled mark
-    // The only genuine type bit in the object: set for combinational inputs and outputs,
-    // clear for the constant-0 object and every internal node. It is the first test in every
-    // kind predicate, and when it is set the meaning of iDiff1 changes completely -- see the
-    // note on iDiff1 below.
+    // The only genuine type bit in the object: set for combinational inputs and outputs and
+    // clear for the constant-0 object and every internal node. The terminal and non-terminal
+    // predicates key on it; Gia_ObjIsMuxId keys on p->pMuxes and Gia_ManObjIsConst0 on the
+    // address instead. Setting it changes iDiff1's meaning -- see the note on iDiff1 below.
     unsigned       fTerm  :   1;  // terminal node (CI/CO)
 
     // ---- word 2: the second fanin offset, plus three more flag bits.
@@ -180,17 +180,17 @@ struct Gia_Obj_t_
     // Inversion carried on the edge to fanin 1; see fCompl0. Left unused when fTerm is set,
     // because a terminal has at most one fanin.
     unsigned       fCompl1:   1;  // the complemented attribute
-    // General-purpose mark with the same four-way reuse as fMark0, and its partner both in
-    // the ternary-simulation state pair and in the saturating fanout count.
+    // General-purpose mark with three of fMark0's four roles: a plain user mark, the high bit
+    // of the ternary-simulation state pair, and the high bit of the saturating fanout count.
     unsigned       fMark1 :   1;  // second user-controlled mark
     // Nominally the value this node takes when every combinational input is 0. That is what
-    // Gia_ManSetPhase produces, by propagating fanin phases forward over the whole array
-    // (giaUtil.c:L467-486, L560-565) with the inputs left at 0. The field is not exclusively
-    // that: Gia_ManSetPhasePattern (giaUtil.c:L524) leaves the value under an arbitrary input
-    // pattern in it, Gia_ManSetPhase1 (giaUtil.c:L555) the value under the all-ones pattern,
-    // and Gia_ManAppendAnd overwrites it with the conjunction of its fanins' phases whenever
-    // p->fSweeper or p->fBuiltInSim is set. Gia_ObjPhaseReal folds in the complement bit of a
-    // tagged address before returning it.
+    // Gia_ManSetPhase produces (giaUtil.c:L517-523), by walking the whole array and calling
+    // the per-object helper Gia_ObjSetPhase (giaUtil.c:L467-487) with the inputs left at 0.
+    // The field is not exclusively that: Gia_ManSetPhasePattern (giaUtil.c:L524) leaves the
+    // value under an arbitrary input pattern in it, Gia_ManSetPhase1 (giaUtil.c:L555) the
+    // value under the all-ones pattern, and Gia_ManAppendAnd overwrites it with the
+    // conjunction of its fanins' phases whenever p->fSweeper or p->fBuiltInSim is set.
+    // Gia_ObjPhaseReal folds in the complement bit of a tagged address before returning it.
     unsigned       fPhase :   1;  // value under 000 pattern
 
     // ---- word 3: one full 32-bit word, no bit fields.
@@ -234,7 +234,7 @@ struct Gia_Obj_t_
 //  * Eight vectors are embedded BY VALUE rather than by pointer -- vHash, vHTable, vRefs,
 //    vCopies, vCopies2, vCopiesTwo, vSuppVars and vVarMap. Code therefore takes their
 //    address (&p->vHTable, &p->vHash) and Gia_ManStop releases them with Vec_IntErase
-//    rather than Vec_IntFreeP (giaMan.c:L156-161, L192-194).
+//    rather than Vec_IntFreeP (giaMan.c:L156-161, L185-187).
 //
 // Ownership is not uniform: some members are freed by Gia_ManStop, others are borrowed.
 // Gia_ManMemory (giaMan.c:L239-256) totals the allocations it charges to the manager, which
@@ -841,10 +841,10 @@ static inline int          Gia_ObjRiToRoId( Gia_Man_t * p, int ObjId )         {
 // field is the CI/CO list index instead (Gia_ObjCioId), so a combinational output
 // has just one meaningful fanin, reached through the iDiff0 readers, and a
 // combinational input has none.  The fanin-1 readers below do not test fTerm.
-// Two properties follow from subtraction alone, and they are invariants of the
-// representation rather than habits of a particular pass.  First, both fanins
-// of an object necessarily precede it in the array, so the array is in
-// topological order and a forward reference cannot be expressed at all.
+// Two properties follow from subtraction alone.  First, the field is unsigned
+// and only ever subtracted, so no offset reaches forward; a positive,
+// well-formed offset lands on an earlier object, which is what puts the array
+// in topological order, while a zero offset would name the object itself.
 // Second, an offset stays correct when the whole array moves, which is what
 // lets Gia_ManAppendObj reallocate p->pObjs without rewriting any object.
 // Naming across the block: a trailing 0, 1 or 2 selects the fanin; the C forms
@@ -1131,14 +1131,14 @@ extern void Gia_ObjAddFanout( Gia_Man_t * p, Gia_Obj_t * pObj, Gia_Obj_t * pFano
 //   - Growth is by doubling, clamped at the ceiling: nObjNew is
 //     min(2 * nObjsAlloc, 2^29).  The clamp is why the ceiling is reached
 //     exactly rather than overshot.
-//   - When p->nObjs has already reached 2^29 the function prints "Hard limit on
-//     the number of nodes (2^29) is reached. Quitting..." and calls exit(1).
-//     That is an observed property of the code: the ceiling is enforced by
-//     terminating the process, not by returning a failure to the caller, so no
-//     constructor in this header has an out-of-space return value.  2^29 is
-//     also the number of positions a 29-bit offset field can count, but the two
-//     limits are not the same thing: all ones in an offset field is reserved for
-//     GIA_NONE, so the largest ordinary delta is 2^29 - 2.
+//   - Still on that branch, when p->nObjs has already reached 2^29 the function
+//     prints "Hard limit on the number of nodes (2^29) is reached. Quitting..."
+//     and calls exit(1).  Both the clamp and that test live inside the capacity
+//     branch, so 2^29 is the ceiling this helper enforces as it grows and not a
+//     bound checked anywhere else: Gia_ManStart asserts only nObjsMax > 0
+//     (giaMan.c:L71), so a manager given a larger initial capacity never
+//     reaches the test.  Where it does fire, the ceiling is enforced by ending
+//     the process, so no constructor in this header returns an out-of-space code.
 //   - p->pObjs is reallocated and the grown tail is zeroed, so a freshly
 //     appended object reads as all-zero in all three words before its
 //     constructor writes it.
@@ -1158,7 +1158,7 @@ extern void Gia_ObjAddFanout( Gia_Man_t * p, Gia_Obj_t * pObj, Gia_Obj_t * pFano
 // before the call is stale.  The hashing layer writes through such a pointer
 // directly while the vector still has spare capacity, and only on the
 // capacity-exhausting path appends first and re-runs Gia_ManHashFind for a
-// fresh position (giaHash.c:L592-600, L722-730, L810-818).
+// fresh position (giaHash.c:L592-600, L669-677, L749-757).
 static inline Gia_Obj_t * Gia_ManAppendObj( Gia_Man_t * p )  
 { 
     if ( p->nObjs == p->nObjsAlloc )

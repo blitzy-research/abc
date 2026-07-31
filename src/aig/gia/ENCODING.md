@@ -61,9 +61,13 @@ toolchain — `gcc` on `x86_64` Linux, the `CC := gcc` of `Makefile:L2` with no 
 in the build. The command is:
 
 ```bash
-printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu %%zu %%zu\\n",sizeof(Gia_Obj_t),sizeof(Gia_Man_t),sizeof(Gia_Rpr_t),sizeof(Gia_Plc_t));return 0;}\n' > /tmp/probe.c
-gcc -I src -DABC_USE_STDINT_H=1 -o /tmp/probe /tmp/probe.c -lm && /tmp/probe
+d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT
+printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu %%zu %%zu\\n",sizeof(Gia_Obj_t),sizeof(Gia_Man_t),sizeof(Gia_Rpr_t),sizeof(Gia_Plc_t));return 0;}\n' > "$d/probe.c"
+gcc -I src -DABC_USE_STDINT_H=1 -o "$d/probe" "$d/probe.c" -lm && "$d/probe"
 ```
+
+The workspace is a fresh directory from `mktemp -d`, and the trap removes it on exit, so nothing is
+written to a predictable shared path.
 
 It prints `12 1136 4 4`.
 
@@ -83,21 +87,29 @@ at `src/aig/gia/gia.h:L142`, the opening brace at `src/aig/gia/gia.h:L143`, the 
 `src/aig/gia/gia.h:L152-204`, and the closing brace at `src/aig/gia/gia.h:L205`. Two blank lines, at
 `src/aig/gia/gia.h:L170` and `src/aig/gia/gia.h:L195`, separate the three words.
 
-The first word, quoted verbatim from `src/aig/gia/gia.h:L152-169`:
+The first word. Each declaration below is quoted verbatim — from `src/aig/gia/gia.h:L152`, `L156`,
+`L164` and `L169` in turn — but the four are not contiguous in the source: an explanatory comment
+sits above each one, and the `// ...` lines below stand for those elisions.
 
 ```c
     unsigned       iDiff0 :  29;  // the diff of the first fanin
+    // ...
     unsigned       fCompl0:   1;  // the complemented attribute
+    // ...
     unsigned       fMark0 :   1;  // first user-controlled mark
+    // ...
     unsigned       fTerm  :   1;  // terminal node (CI/CO)
 ```
 
-The second word, quoted verbatim from `src/aig/gia/gia.h:L179-194`:
+The second word, the same way, from `src/aig/gia/gia.h:L179`, `L182`, `L185` and `L194`:
 
 ```c
     unsigned       iDiff1 :  29;  // the diff of the second fanin
+    // ...
     unsigned       fCompl1:   1;  // the complemented attribute
+    // ...
     unsigned       fMark1 :   1;  // second user-controlled mark
+    // ...
     unsigned       fPhase :   1;  // value under 000 pattern
 ```
 
@@ -489,12 +501,17 @@ field is dropped for width, so read the cited line for the exact text.
 | `Gia_ObjIsConst0` | `L798` | `iDiff0 == GIA_NONE && iDiff1 == GIA_NONE` |
 | `Gia_ManObjIsConst0` | `L799` | `pObj == p->pObjs` |
 
-Read down the `iDiff0` column and the discrimination becomes a two-step decision. `fTerm` splits
-terminals from non-terminals `src/aig/gia/gia.h:L776-777`. Within each half, `iDiff0 == GIA_NONE`
+Read down the `iDiff0` column and the discrimination becomes a short cascade of tests. `fTerm`
+splits terminals from non-terminals `src/aig/gia/gia.h:L776-777`. Within each half, `iDiff0 == GIA_NONE`
 splits again: among terminals it separates combinational inputs from combinational outputs
 `src/aig/gia/gia.h:L778-779`; among non-terminals it separates the constant-0 object from
-everything with fanins `src/aig/gia/gia.h:L780`. Only then does the ordering of the two offsets
-select among AND, real XOR, real MUX and buffer.
+everything with fanins `src/aig/gia/gia.h:L780`. The ordering of the two offsets then splits the
+objects that have fanins three ways, and no further: `iDiff0 == iDiff1` is a buffer
+`src/aig/gia/gia.h:L793`, `iDiff0 < iDiff1` is a real XOR `src/aig/gia/gia.h:L783`, and
+`iDiff0 > iDiff1` is the AND-shaped class that a plain AND and a real MUX share. Splitting that
+class takes the manager's `p->pMuxes` side array rather than the ordering: `Gia_ObjIsMuxId` reads it
+`src/aig/gia/gia.h:L784` and `Gia_ObjIsAndReal` has to exclude it explicitly
+`src/aig/gia/gia.h:L789`.
 
 ### The dispatch-order hazard
 
@@ -663,8 +680,9 @@ separate fact from the type's size: the same probe as section 1, extended with `
 `_Alignof(Gia_Obj_t)` as **4** while `sizeof(Gia_Obj_t)` is 12.
 
 ```bash
-printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu\\n",sizeof(Gia_Obj_t),_Alignof(Gia_Obj_t));return 0;}\n' > /tmp/probe2.c
-gcc -I src -DABC_USE_STDINT_H=1 -o /tmp/probe2 /tmp/probe2.c -lm && /tmp/probe2
+d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT
+printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu\\n",sizeof(Gia_Obj_t),_Alignof(Gia_Obj_t));return 0;}\n' > "$d/probe.c"
+gcc -I src -DABC_USE_STDINT_H=1 -o "$d/probe" "$d/probe.c" -lm && "$d/probe"
 ```
 
 It prints `12 4`. Both numbers are measurements taken with the toolchain named in section 1, not
@@ -811,20 +829,26 @@ third input test only whether the side array exists, rather than whether the obj
 `p->pMuxes && Abc_LitIsCompl(...)` `src/aig/gia/gia.h:L872`.
 
 **A per-object type tag.** There is none. Kind is inferred from `fTerm`, from `GIA_NONE` in
-`iDiff0`, and from the ordering of the two offsets, as set out in section 6
-`src/aig/gia/gia.h:L776-799`.
+`iDiff0`, and from the ordering of the two offsets, and even those three stop at the AND-shaped
+class: separating a real MUX from a plain AND needs the manager's `p->pMuxes` array, which is not in
+the object at all. Section 6 sets out the whole cascade `src/aig/gia/gia.h:L776-799`.
 
-**More than 2^29 objects.** `Gia_ManAppendObj` caps its doubling at `(1 << 29)`
-`src/aig/gia/gia.h:L1166`, and on reaching that count it prints and terminates the process:
+**More than 2^29 objects, once the array has to grow.** `Gia_ManAppendObj` caps its doubling at
+`(1 << 29)` `src/aig/gia/gia.h:L1166`, and on reaching that count it prints and terminates the
+process:
 
 ```c
         if ( p->nObjs == (1 << 29) )
             printf( "Hard limit on the number of nodes (2^29) is reached. Quitting...\n" ), exit(1);
 ```
 
-at `src/aig/gia/gia.h:L1167-1168`. The observed failure mode is `exit(1)` from inside the
-constructor, not an error returned to the caller. The bound is the same 2^29 as the offset field
-width, and `GIA_NONE` is 2^29 − 1 `src/aig/gia/gia.h:L66`.
+at `src/aig/gia/gia.h:L1167-1168`. Both the cap and that test sit inside the capacity branch
+`src/aig/gia/gia.h:L1164`, so 2^29 is the ceiling the growth helper enforces *as it grows* and not a
+bound the manager checks anywhere else. `Gia_ManStart` asserts only `nObjsMax > 0`
+`src/aig/gia/giaMan.c:L71` and never compares its argument against 2^29, so a manager given a larger
+initial capacity never reaches this test at all. Where the test does fire, the observed failure mode
+is `exit(1)` from inside the constructor, not an error returned to the caller. The bound is the same
+2^29 as the offset field width, and `GIA_NONE` is 2^29 − 1 `src/aig/gia/gia.h:L66`.
 
 **More than 2^28 equivalence representatives.** `Gia_Rpr_t::iRepr` is 28 bits wide
 `src/aig/gia/gia.h:L92`, and its "none" value is `GIA_VOID`, which is 2^28 − 1
@@ -892,7 +916,7 @@ number, which is only accurate in the state of the tree described in section 1.
 | 4 | `Gia_Plc_t` fields and their source comments | `src/aig/gia/gia.h:L104-111`, `L107`, `L108`, `L109`, `L110` |
 | 5 | Seventeen `Gia_ManAppend` definitions, one of them the growth helper | `src/aig/gia/gia.h:L1162-1525`, `L1162` |
 | 5 | The six constructors that write an object directly | `src/aig/gia/gia.h:L1214`, `L1255`, `L1309`, `L1352`, `L1390`, `L1412` |
-| 5 | Constant-0 established by `Gia_ManStart` | `src/aig/gia/giaMan.c:L68-80`, `L80`, `L81` |
+| 5 | Constant-0 established by `Gia_ManStart` | `src/aig/gia/giaMan.c:L68-80`, `L75`, `L76` |
 | 5, 7 | `Gia_ManAppendCi` field writes, list push and return | `src/aig/gia/gia.h:L1212-1220`, `L1215`, `L1216`, `L1217`, `L1218`, `L1219` |
 | 5, 7 | `Gia_ManAppendCo` field writes, driver assertion, list push, fanout, return | `src/aig/gia/gia.h:L1407-1421`, `L1411`, `L1413`, `L1414`, `L1415`, `L1416`, `L1417`, `L1418-1419`, `L1420` |
 | 5, 6 | `Gia_ManAppendAnd` branches and side effects | `src/aig/gia/gia.h:L1253-1296`, `L1258`, `L1259`, `L1261-1264`, `L1268-1271`, `L1273-1277`, `L1278-1285`, `L1286-1292`, `L1293-1294`, `L1295` |
@@ -903,7 +927,7 @@ number, which is only accurate in the state of the tree described in section 1.
 | 5 | Structural composites: `Or`, `Mux`, `Maj`, `Xor` | `src/aig/gia/gia.h:L1429-1432`, `L1433-1438`, `L1439-1445`, `L1446-1449` |
 | 5 | Constant-folding `*2` variants | `src/aig/gia/gia.h:L1466-1480`, `L1468`, `L1479`, `L1481-1484`, `L1485-1490`, `L1491-1497`, `L1498-1501`, `L1511-1525`, `L1524` |
 | 6 | The fourteen kind predicates | `src/aig/gia/gia.h:L776-799` |
-| 6 | Hashing-layer swap conditions | `src/aig/gia/giaHash.c:L578`, `L710-711`, `L800` |
+| 6 | Hashing-layer swap conditions | `src/aig/gia/giaHash.c:L578`, `L657-658`, `L739-740` |
 | 6, 10 | `Gia_ObjFaninNum` dispatch order | `src/aig/gia/gia.h:L933` |
 | 7 | `Gia_ObjCioId` and `Gia_ObjSetCioId`, each asserting `fTerm` | `src/aig/gia/gia.h:L746-747` |
 | 7 | Primary versus flop discrimination by index | `src/aig/gia/gia.h:L820-823` |

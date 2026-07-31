@@ -1826,28 +1826,28 @@ Gia_Man_t * Gia_ManDupDfs2( Gia_Man_t * p )
 
   Description [Gia_ManDupDfs_rec below is a post-order recursion whose
   visited set is the Value field itself. Gia_ManFillValue seeds every
-  Value of p with ~0, and the complement of ~0 is 0, so
-  `if ( ~pObj->Value ) return;` is false exactly while the object is
-  still uncopied and turns true the moment a real copy literal has been
-  stored over the seed - that is what keeps the recursion from
-  descending a second time into shared logic. The body recurses into
-  both fanins before appending the object itself, so a fanin always
-  carries a copy literal by the time Gia_ObjFanin0Copy and
-  Gia_ObjFanin1Copy read it.
-  An observed consequence of that test is that Gia_ManFillValue and
-  Gia_ManCleanValue are not interchangeable here. Gia_ManCleanValue
-  writes 0 into every Value, and ~0 is nonzero, so seeded that way the
-  test reads every object as already copied on its first visit and
-  nothing below the outputs is rebuilt.
-  Gia_ManDupDfs drives that recursion: it fills the Values, seeds the
-  constant with 0, appends every combinational input, recurses from the
-  driver of every combinational output, then appends the outputs
-  themselves, sets the register count, copies nConstrs, and duplicates a
-  sequential counter-example when p->pCexSeq is set. Only objects
-  reachable from the outputs reach the result, and they are laid out in
-  the order the recursion completes rather than in source index order.
-  The recursion is not iterative, so its depth follows the depth of the
-  logic it walks.]
+  Value of p with ~0, and ~(~0) is 0, so `if ( ~pObj->Value ) return;`
+  is false while an object is still uncopied and true once a copy
+  literal has replaced the seed, stopping a second descent into shared
+  logic. Gia_ManCleanValue, writing 0, is no substitute: ~0 is nonzero,
+  so every object would read as copied. The body recurses into both
+  fanins before appending, so Gia_ObjFanin0Copy and Gia_ObjFanin1Copy
+  always find a literal, and it appends through one unconditional
+  Gia_ManAppendAnd under an assert( Gia_ObjIsAnd(pObj) ) that admits
+  buffers and real XOR and real MUX objects too, Gia_ObjIsAnd in gia.h
+  being true of all three. The interior it preserves is therefore
+  plain-AND only: a real XOR loses its iDiff0 < iDiff1 tag to that
+  constructor's ordering normalization, a real MUX loses its third fanin
+  because pNew->pMuxes is never allocated, and a buffer arrives as two
+  literals on one variable, which that constructor's distinct-fanin
+  assertion rejects. Gia_ManDupDfs drives it: fill the Values, seed the
+  constant with 0, append every combinational input, recurse from each
+  combinational-output driver, append every combinational output, set
+  the register count, copy nConstrs, and duplicate p->pCexSeq if set.
+  Both terminal walks are unconditional, so every combinational input
+  and output survives and only internal logic is confined to the output
+  cones, in recursion-completion rather than source index order. The
+  recursion is not iterative, so its depth follows the logic depth.]
                
   SideEffects []
 
