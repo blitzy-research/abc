@@ -235,7 +235,7 @@ almost all of it:
 | `src/aig/gia/gia.h` | 2658 | The whole declared contract: both structs, the two sentinels, 314 `static inline` primitives, 62 `ForEach` iterator macros, 68 `#define` directives, 516 `extern` declarations, the fourteen kind predicates and the sixteen object constructors |
 | `src/aig/gia/giaMan.c` | 2475 | Manager lifecycle and ownership: `Gia_ManStart` `src/aig/gia/giaMan.c:L68`, `Gia_ManStop` `src/aig/gia/giaMan.c:L109`, `Gia_ManMemory` `src/aig/gia/giaMan.c:L239`, `Gia_ManStopP` `src/aig/gia/giaMan.c:L275`, `Gia_ManSetRegNum` `src/aig/gia/giaMan.c:L826` |
 | `src/aig/gia/giaHash.c` | 1334 | Structural hashing end to end: the key function, the chain walk, the table lifecycle, the AND, real XOR and real MUX entry points, and the canonical rebuild |
-| `src/aig/gia/giaDup.c` | 6851 | Duplication and rebuild. Counting definitions that return a new manager, with `grep -cE '^Gia_Man_t \* Gia_ManDup' src/aig/gia/giaDup.c`, gives 90 entry points |
+| `src/aig/gia/giaDup.c` | 6881 | Duplication and rebuild. Counting definitions that return a new manager, with `grep -cE '^Gia_Man_t \* Gia_ManDup' src/aig/gia/giaDup.c`, gives 90 entry points |
 | `src/aig/gia/giaUtil.c` | 3684 | The shared field-reuse protocol: the traversal-identifier counter, and the mark, value and phase helpers |
 
 Two more files are cited in this document as corroborating evidence without being central:
@@ -1017,9 +1017,10 @@ uses `~0` as its visited test — `if ( ~pObj->Value )` guarding an early `retur
 `src/aig/gia/giaDup.c:L1956-1957` — and `Gia_ManDupMarked` calls it at
 `src/aig/gia/giaDup.c:L1644` and leaves the `Value` of every skipped object at `~0`.
 
-Because the two disciplines order their calls differently, one diagram cannot show both honestly. The
-first traces `Gia_ManDup` `src/aig/gia/giaDup.c:L746-776` line by line — the iteration-order variant,
-which never calls `Gia_ManFillValue`:
+Because the two disciplines order their calls differently, one diagram cannot show both honestly, so
+each is set out on its own below. The diagram traces `Gia_ManDup` `src/aig/gia/giaDup.c:L746-776` line
+by line — the iteration-order variant, which never calls `Gia_ManFillValue` — and the table after it
+traces the recursive variant call by call:
 
 ```mermaid
 sequenceDiagram
@@ -1040,36 +1041,26 @@ sequenceDiagram
 
 Diagram: the iteration-order copy protocol, traced against `src/aig/gia/giaDup.c:L746-776`. There is
 no `Gia_ManFillValue` call in this function, and none is needed: `Gia_ManForEachObj1` reaches every
-fanin before its user.
+fanin before its user. The two variants that do seed the field with `~0` first — `Gia_ManDupDfs` at
+`src/aig/gia/giaDup.c:L1971` and `Gia_ManDupMarked` at `src/aig/gia/giaDup.c:L1644`, both through
+`Gia_ManFillValue` `src/aig/gia/giaUtil.c:L449-454` — are covered by the table below and by the rest of
+this subsection.
 
-The second traces `Gia_ManDupDfs` `src/aig/gia/giaDup.c:L1963-1984`, the recursive variant. Note the
-order: the new manager is started *first*, at `src/aig/gia/giaDup.c:L1968`, and the source's `Value`
-field is filled with `~0` afterwards, at `src/aig/gia/giaDup.c:L1971`:
+The recursive variant is `Gia_ManDupDfs` `src/aig/gia/giaDup.c:L1963-1984`, and its call order is the
+part worth reading closely: the new manager is started *first*, and the source's `Value` field is
+filled with `~0` only afterwards.
 
-```mermaid
-sequenceDiagram
-    participant Pass as Gia_ManDupDfs
-    participant Old as source manager p
-    participant New as new manager pNew
-    Pass->>New: Gia_ManStart Gia_ManObjNum p - L1968
-    Pass->>Old: Gia_ManFillValue p writes ~0 into every Value - L1971
-    Pass->>Old: Gia_ManConst0 p Value set to 0 - L1972
-    loop Gia_ManForEachCi over p - every Ci unconditionally - L1973
-        Pass->>New: Gia_ManAppendCi
-        New-->>Pass: literal stored into this Ci Value - L1974
-    end
-    loop Gia_ManForEachCo over p - L1975
-        Pass->>Old: Gia_ManDupDfs_rec on Gia_ObjFanin0 - L1976
-        Note over Pass,Old: recursion returns at once when ~Value is true - L1956-L1957
-    end
-    loop Gia_ManForEachCo over p - every Co unconditionally - L1977
-        Pass->>New: Gia_ManAppendCo Gia_ObjFanin0Copy
-        New-->>Pass: literal stored into this Co Value - L1978
-    end
-    Pass->>New: Gia_ManSetRegNum Gia_ManRegNum p - L1979
-```
+| Step | What `Gia_ManDupDfs` does | Line |
+|---|---|---|
+| 1 | `pNew = Gia_ManStart( Gia_ManObjNum(p) );` — the new manager exists before any `Value` is touched | `src/aig/gia/giaDup.c:L1968` |
+| 2 | `Gia_ManFillValue( p );` — writes `~0` into every `Value` of the source, which is what makes `~Value` a visited test | `src/aig/gia/giaDup.c:L1971`, `src/aig/gia/giaUtil.c:L449-454` |
+| 3 | `Gia_ManConst0(p)->Value = 0;` — seeds the source constant with literal 0 | `src/aig/gia/giaDup.c:L1972` |
+| 4 | `Gia_ManForEachCi` appends a combinational input to `pNew` for every source one, unconditionally, and stores each returned literal into that input's `Value` | `src/aig/gia/giaDup.c:L1973-1974` |
+| 5 | `Gia_ManForEachCo` calls `Gia_ManDupDfs_rec` on each combinational output's `Gia_ObjFanin0`; the recursion returns at once where `~Value` already holds | `src/aig/gia/giaDup.c:L1975-1976`, `src/aig/gia/giaDup.c:L1956-1957` |
+| 6 | `Gia_ManForEachCo` appends a combinational output to `pNew` for every source one, unconditionally, resolving its driver through `Gia_ObjFanin0Copy`, and stores each returned literal into that output's `Value` | `src/aig/gia/giaDup.c:L1977-1978` |
+| 7 | `Gia_ManSetRegNum( pNew, Gia_ManRegNum(p) );` carries the register count over | `src/aig/gia/giaDup.c:L1979` |
 
-Diagram: the recursive copy protocol, traced against `src/aig/gia/giaDup.c:L1963-1984` with the
+Table: the recursive copy protocol, traced against `src/aig/gia/giaDup.c:L1963-1984` with the
 recursion body at `src/aig/gia/giaDup.c:L1954-1962`. `Gia_ManDupDfs_rec` appends its two fanins before
 itself `src/aig/gia/giaDup.c:L1959-1961`, so the new array still comes out topologically ordered even
 though the walk is not in index order.
