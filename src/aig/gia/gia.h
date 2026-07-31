@@ -50,7 +50,7 @@ ABC_NAMESPACE_HEADER_START
 // absent fanin costs no extra flag bit: the offset field encodes its own absence. Five of
 // the fourteen kind predicates below test it -- Gia_ObjIsCi, Gia_ObjIsCo, Gia_ObjIsAnd,
 // Gia_ObjIsBuf and Gia_ObjIsConst0 -- and Gia_ManStart writes it into both offset fields
-// of object 0 to create the constant-0 object (giaMan.c:L64).
+// of object 0 to create the constant-0 object (giaMan.c:L75).
 //
 // GIA_VOID is 0x0FFFFFFF == 2^28 - 1, exactly the largest value a 28-bit field can hold.
 // It belongs to the 28-bit iRepr member of Gia_Rpr_t below and means "no representative"
@@ -185,9 +185,9 @@ struct Gia_Obj_t_
     unsigned       fMark1 :   1;  // second user-controlled mark
     // Nominally the value this node takes when every combinational input is 0. That is what
     // Gia_ManSetPhase produces, by propagating fanin phases forward over the whole array
-    // (giaUtil.c:L387-406, L420-425) with the inputs left at 0. The field is not exclusively
-    // that: Gia_ManSetPhasePattern (giaUtil.c:L427) leaves the value under an arbitrary input
-    // pattern in it, Gia_ManSetPhase1 (giaUtil.c:L450) the value under the all-ones pattern,
+    // (giaUtil.c:L467-486, L560-565) with the inputs left at 0. The field is not exclusively
+    // that: Gia_ManSetPhasePattern (giaUtil.c:L524) leaves the value under an arbitrary input
+    // pattern in it, Gia_ManSetPhase1 (giaUtil.c:L555) the value under the all-ones pattern,
     // and Gia_ManAppendAnd overwrites it with the conjunction of its fanins' phases whenever
     // p->fSweeper or p->fBuiltInSim is set. Gia_ObjPhaseReal folds in the complement bit of a
     // tagged address before returning it.
@@ -197,9 +197,9 @@ struct Gia_Obj_t_
     // The one full-width member, and the object's general scratch word. During duplication
     // and rebuild it holds this object's copy literal in the DESTINATION manager, with all
     // ones as the "not yet copied" marker: Gia_ManFillValue writes ~0 into every Value
-    // (giaUtil.c:L369-374) and the recursive duplicators test it as `if ( ~pObj->Value )
+    // (giaUtil.c:L449-454) and the recursive duplicators test it as `if ( ~pObj->Value )
     // return;` (giaDup.c:L1751-1752), which is why Gia_ManCleanValue, writing 0 instead
-    // (giaUtil.c:L354-355), does not serve that purpose. Outside a rebuild the field carries
+    // (giaUtil.c:L423-424), does not serve that purpose. Outside a rebuild the field carries
     // whatever the running pass puts in it.
     unsigned       Value;         // application-specific value
 };
@@ -208,7 +208,7 @@ struct Gia_Obj_t_
 // - pointer to the node copy during duplication 
 // The structural-hash chain is held outside the object: bucket heads live in the manager's
 // vHTable and the chain links live in its vHash, an integer vector indexed by object
-// identifier, as Gia_ManHashFind shows (giaHash.c:L54-68). Gia_ManAppendObj keeps that
+// identifier, as Gia_ManHashFind shows (giaHash.c:L83-97). Gia_ManAppendObj keeps that
 // vector at one entry per object by pushing a zero whenever the table is live. Duplication
 // stores a literal of the destination manager in Value, not an address.
 
@@ -224,7 +224,7 @@ struct Gia_Obj_t_
 //
 //  * A side table that extends an object is indexed by OBJECT IDENTIFIER, so entry i belongs
 //    to object i: pMuxes, pRefs, pLutRefs, pReprs, pNexts, pSibls, pIso (cecIso.c:L278-281),
-//    pTravIds, pSwitching, pPlacement and vHash (giaHash.c:L57). That is why Gia_ManAppendObj
+//    pTravIds, pSwitching, pPlacement and vHash (giaHash.c:L86). That is why Gia_ManAppendObj
 //    grows pMuxes and pushes onto vHash in lockstep with pObjs. Tables outside that list use
 //    other domains -- vNamesIn and vNamesOut are indexed by CI and CO list position and
 //    vCellMapping by literal -- so the rule holds for the members named here and no further.
@@ -234,10 +234,10 @@ struct Gia_Obj_t_
 //  * Eight vectors are embedded BY VALUE rather than by pointer -- vHash, vHTable, vRefs,
 //    vCopies, vCopies2, vCopiesTwo, vSuppVars and vVarMap. Code therefore takes their
 //    address (&p->vHTable, &p->vHash) and Gia_ManStop releases them with Vec_IntErase
-//    rather than Vec_IntFreeP (giaMan.c:L129-134, L158-160).
+//    rather than Vec_IntFreeP (giaMan.c:L156-161, L192-194).
 //
 // Ownership is not uniform: some members are freed by Gia_ManStop, others are borrowed.
-// Gia_ManMemory (giaMan.c:L196-213) totals the allocations it charges to the manager, which
+// Gia_ManMemory (giaMan.c:L239-256) totals the allocations it charges to the manager, which
 // is a subset of what Gia_ManStop releases rather than a full ownership list. Members that
 // are declared and released but never assigned on a Gia_Man_t anywhere in src/ are marked
 // "not determinable" below rather than guessed at.
@@ -960,7 +960,7 @@ static inline int          Gia_ManPoIsConst1( Gia_Man_t * p, int iPoIndex )    {
 //   (1) Value in the source object, read below and by the Fanin*Copy helpers.
 //       Gia_ManFillValue sets every Value to ~0, which is the miss marker;
 //       Gia_ManCleanValue sets every Value to 0, a valid literal that no test
-//       can distinguish from a copy (giaUtil.c:L351-374).
+//       can distinguish from a copy (giaUtil.c:L420-454).
 //   (2) &p->vCopies indexed as Gia_ManObjNum(p) * f + ObjId, one plane per
 //       time frame, through Gia_ObjCopyF.
 //   (3) &p->vCopies indexed as ObjId, through Gia_ObjCopyArray, miss -1.
@@ -1067,11 +1067,15 @@ static inline int          Gia_ObjLutRefDec( Gia_Man_t * p, Gia_Obj_t * pObj )  
 // invalidates every mark at once, which makes the clear O(1) instead of
 // O(nObjs).  Gia_ManIncrementTravId does that advance, and also allocates
 // p->pTravIds lazily at Gia_ManObjNum(p) + 100 entries, doubles and zeroes the
-// new half when the object count outgrows it (giaUtil.c:L190-205).
-// Two generations are readable at once.  The Previous forms write and test
-// p->nTravIds - 1, so a pass can advance the counter and still see which
-// objects the immediately preceding pass touched; nothing older than one
-// generation is distinguishable.
+// new half when the object count outgrows it (giaUtil.c:L215-230).
+// Two generations are reachable through these accessors.  The Previous forms
+// write and test p->nTravIds - 1, so a pass can advance the counter and still
+// see which objects the immediately preceding pass touched; none of the twelve
+// asks about a third, so nothing older than the previous generation is
+// distinguishable through this interface.  The storage is not so limited: an
+// entry is a plain int holding whatever generation last wrote it, and a pass
+// that indexes p->pTravIds directly can span more generations than these
+// accessors expose (giaUnate.c:L124-136 works over three).
 // Every accessor asserts that the identifier is below p->nTravIdsAlloc.  That
 // upper bound is the only guard: a negative identifier is not rejected, and
 // there is no lazy allocation on this path, so the side array has to have been
@@ -1142,7 +1146,7 @@ extern void Gia_ObjAddFanout( Gia_Man_t * p, Gia_Obj_t * pObj, Gia_Obj_t * pFano
 //     lockstep, which keeps the side array indexable by object identifier.
 //   - When the hash table is live, one entry is pushed onto p->vHash so that
 //     vector keeps exactly one slot per object, which is the layout
-//     Gia_ManHashFind walks (giaHash.c:L54-68).
+//     Gia_ManHashFind walks (giaHash.c:L83-97).
 //   - The new object's address is returned and p->nObjs is advanced.
 // Two invalidation hazards arise here, on two different arrays, and both are
 // conditional.  The growth branch runs only when p->nObjs has reached
@@ -1154,7 +1158,7 @@ extern void Gia_ObjAddFanout( Gia_Man_t * p, Gia_Obj_t * pObj, Gia_Obj_t * pFano
 // before the call is stale.  The hashing layer writes through such a pointer
 // directly while the vector still has spare capacity, and only on the
 // capacity-exhausting path appends first and re-runs Gia_ManHashFind for a
-// fresh position (giaHash.c:L497-505, L552-560, L609-617).
+// fresh position (giaHash.c:L592-600, L722-730, L810-818).
 static inline Gia_Obj_t * Gia_ManAppendObj( Gia_Man_t * p )  
 { 
     if ( p->nObjs == p->nObjsAlloc )
@@ -1336,7 +1340,7 @@ static inline int Gia_ManAppendXorReal( Gia_Man_t * p, int iLit0, int iLit1 )
 // created at all.  Because 0 doubles as the non-MUX marker, a control literal of
 // 0 stored through the first branch leaves an object that Gia_ObjIsMux does not
 // report as a MUX; the hashing layer never presents that case, folding a control
-// literal below 2 away before it calls here (giaHash.c:L525-526).
+// literal below 2 away before it calls here (giaHash.c:L642-643).
 // When the data inputs are swapped into the other order the stored control
 // literal is complemented, because exchanging the two data inputs of a
 // multiplexer and inverting its control select the same function.
