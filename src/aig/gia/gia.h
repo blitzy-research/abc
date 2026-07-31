@@ -159,7 +159,7 @@ struct Gia_Obj_t_
     // as a plain user mark, as the low bit of the ternary-simulation state packed with
     // fMark1 (Gia_ObjTerSimSetC/Set0/Set1/SetX), as the low bit of the two-bit saturating
     // fanout count Gia_ManAppendAnd maintains while p->fSweeper is set, and as the delete
-    // marker Gia_ManDupMarked consumes and clears (giaDup.c:L1624-1628). Two passes cannot
+    // marker Gia_ManDupMarked consumes and clears (giaDup.c:L1654-1658). Two passes cannot
     // hold it at once.
     unsigned       fMark0 :   1;  // first user-controlled mark
     // The only genuine type bit in the object: set for combinational inputs and outputs and
@@ -198,7 +198,7 @@ struct Gia_Obj_t_
     // and rebuild it holds this object's copy literal in the DESTINATION manager, with all
     // ones as the "not yet copied" marker: Gia_ManFillValue writes ~0 into every Value
     // (giaUtil.c:L449-454) and the recursive duplicators test it as `if ( ~pObj->Value )
-    // return;` (giaDup.c:L1926-1927), which is why Gia_ManCleanValue, writing 0 instead
+    // return;` (giaDup.c:L1956-1957), which is why Gia_ManCleanValue, writing 0 instead
     // (giaUtil.c:L423-424), does not serve that purpose. Outside a rebuild the field carries
     // whatever the running pass puts in it.
     unsigned       Value;         // application-specific value
@@ -772,7 +772,7 @@ static inline char *       Gia_ObjNameObj( Gia_Man_t * p, Gia_Obj_t * pObj )   {
 // DISPATCH ORDER MATTERS. Gia_ObjIsAnd is true for buffers, for real XORs and for real MUXes
 // alike, because all three are non-terminal objects that have a fanin. A chain of tests must
 // therefore take the narrow kinds before the wide one: buffer, then XOR, then MUX, then plain
-// AND, which is the order Gia_ManDupMarked uses (giaDup.c:L1630-1639).
+// AND, which is the order Gia_ManDupMarked uses (giaDup.c:L1660-1669).
 static inline int          Gia_ObjIsTerm( Gia_Obj_t * pObj )                   { return pObj->fTerm;                             } 
 static inline int          Gia_ObjIsAndOrConst0( Gia_Obj_t * pObj )            { return!pObj->fTerm;                             } 
 static inline int          Gia_ObjIsCi( Gia_Obj_t * pObj )                     { return pObj->fTerm && pObj->iDiff0 == GIA_NONE; } 
@@ -979,7 +979,7 @@ static inline int          Gia_ObjLitCopy( Gia_Man_t * p, int iLit )           {
 // append or hashing entry point.  Gia_ObjFanin2Copy dereferences whatever
 // Gia_ObjFanin2 returns, and that is a null address on a manager without
 // p->pMuxes; its callers reach it from a real-MUX branch, where the side array
-// exists and the third fanin is a stored literal (giaDup.c:L1637).
+// exists and the third fanin is a stored literal (giaDup.c:L1667).
 static inline int          Gia_ObjFanin0Copy( Gia_Obj_t * pObj )               { return Abc_LitNotCond( Gia_ObjFanin0(pObj)->Value, Gia_ObjFaninC0(pObj) );     }
 static inline int          Gia_ObjFanin1Copy( Gia_Obj_t * pObj )               { return Abc_LitNotCond( Gia_ObjFanin1(pObj)->Value, Gia_ObjFaninC1(pObj) );     }
 static inline int          Gia_ObjFanin2Copy( Gia_Man_t * p, Gia_Obj_t * pObj ){ return Abc_LitNotCond(Gia_ObjFanin2(p, pObj)->Value, Gia_ObjFaninC2(p, pObj)); }

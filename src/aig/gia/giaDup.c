@@ -1549,36 +1549,66 @@ Gia_Man_t * Gia_ManDupFlopClass( Gia_Man_t * p, int iClass )
   call site in the tree - src/aig/gia/giaScl.c:L87, L113 and L186,
   src/aig/gia/giaEquiv.c:L1049-1054, and src/aig/gia/giaFrames.c:L815-817
   and L915-917 - builds its set with one of the two marking passes in
-  src/aig/gia/giaScl.c.
+  src/aig/gia/giaScl.c, and those two passes do not close over the same
+  edges.
   Gia_ManCombMarkUsed marks every AND-shaped object that is not a
   buffer, then clears the mark on everything reachable backwards from
   each buffer driver and each combinational-output driver - following
   fanin 0, fanin 1, the pMuxes control fanin and the pNexts and pSibls
   links - so only unreachable internal logic stays marked
-  (src/aig/gia/giaScl.c:L60-71, with the recursion at L45-59).
+  (src/aig/gia/giaScl.c:L60-71, with the recursion at L45-59). All three
+  fanin edges are walked there.
   Gia_ManSeqMarkUsed marks everything, then clears object 0 and every
   primary input explicitly before clearing whatever the primary outputs
   reach, queueing each visited flop output's flop input as a further root
-  (src/aig/gia/giaScl.c:L156-170). Gia_ManCleanupOutputs runs the
-  combinational pass and then also marks the first nOutputs combinational
-  outputs, under an assertion that the manager holds no registers
-  (src/aig/gia/giaScl.c:L101-113); a marked combinational output drives
-  nothing, so it cannot break the closure.
-  Three consequences follow for a set assembled any other way, and this
+  (src/aig/gia/giaScl.c:L156-170). Its recursion descends through fanin 0
+  of a combinational output and through fanin 0 and fanin 1 of an AND
+  (src/aig/gia/giaScl.c:L128-143) and reads neither p->pMuxes nor
+  Gia_ObjFanin2, so the set it leaves is closed over the two offset
+  fanins only. A real MUX passes that recursion's Gia_ObjIsAnd assertion
+  and is walked as an AND, while this function copies a surviving real
+  MUX's control fanin through Gia_ObjFanin2Copy: a control object that is
+  neither object 0 nor a primary input and that the recursion does not
+  reach by some other edge therefore stays marked, so keeping it unmarked
+  is a precondition the caller of a sequentially marked duplication
+  carries. The two sequential paths are Gia_ManSeqCleanup
+  (src/aig/gia/giaScl.c:L183-187) and the fSeq branch of
+  Gia_ManEquivReduceAndRemap (src/aig/gia/giaEquiv.c:L1049-1054). That
+  pass also leaves the pNexts and pSibls links unwalked, which is the
+  tolerated case described below rather than a fatal one.
+  Gia_ManCleanupOutputs runs the combinational pass and then also marks
+  the first nOutputs combinational outputs, under an assertion that the
+  manager holds no registers (src/aig/gia/giaScl.c:L101-113); a marked
+  combinational output drives nothing, so it cannot break the closure.
+  Three consequences follow whenever the closure does not hold, and this
   function reports none of them. A marked object that a survivor still
   names keeps the ~0 Gia_ManFillValue left in its Value, so
   Gia_ObjFanin0Copy hands the constructor a negative literal: the
   literal-range assertions at src/aig/gia/gia.h:L1256-1257 catch it, and
-  a build defining NDEBUG stores an out-of-range offset instead. A mark
-  on object 0 is counted by the first walk and never reached by the copy
-  loop, which leaves the destination one object short of what the copy
-  appends, and the closing nObjsAlloc-equals-nObjs assertion is what
-  notices it. A marked buffer is refused outright by the assertion in
-  the skip branch. Marks reached through pReprs and pSibls are the
-  tolerated case rather than a fatal one: each transfer loop below skips
-  an object whose own Value or whose partner's Value is still ~0, so
-  such a link is dropped instead of rebuilt, which is also why the
-  clearing walk above follows those two links.
+  a build defining NDEBUG stores an out-of-range offset instead. A marked
+  MUX control fanin read through Gia_ObjFanin2Copy is the same case,
+  caught instead by the control-literal assertion in Gia_ManAppendMuxReal
+  at src/aig/gia/gia.h:L1356. A mark on object 0 is counted by the first
+  walk and never reached by the copy loop, so it is still set on return
+  and the destination is requested one object short of what the copy
+  appends; whether anything notices depends on the requested capacity,
+  because the growth branch of Gia_ManAppendObj doubles it, clamped at
+  2^29 (src/aig/gia/gia.h:L1164-1181). A capacity of zero or less trips
+  Gia_ManStart's own assert( nObjsMax > 0 ) at src/aig/gia/giaMan.c:L71
+  first. Otherwise the copy appends exactly that many objects on top of
+  the constant, so the walk ends with nObjs one above the requested
+  capacity, and the closing assertion holds only where the doubled
+  capacity lands on that same number: at a requested capacity of 1, which
+  doubles to 2 while nObjs reaches 2, and, with the clamp in play, at
+  2^29 - 1. At every other capacity of 2 or more the two end unequal and
+  the closing assertion is what fires, so this is a capacity-dependent
+  report rather than a guaranteed one. A marked buffer is refused
+  outright by the assertion in the skip branch. Marks reached through
+  pReprs and pSibls are the tolerated case rather than a fatal one: each
+  transfer loop below skips an object whose own Value or whose partner's
+  Value is still ~0, so such a link is dropped instead of rebuilt, which
+  is also why the combinational clearing walk above follows those two
+  links.
   A surviving object is dispatched buffer first, then AND, and inside
   the AND case real XOR first, then real MUX, then plain AND. That order
   follows from the predicates in gia.h rather than from taste:

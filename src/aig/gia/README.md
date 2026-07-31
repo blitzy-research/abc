@@ -608,7 +608,7 @@ The consequence a maintainer meets first is a dispatch-order hazard. `Gia_ObjIsA
 and real MUXes as well as for plain ANDs. Code that asks `Gia_ObjIsAnd` before asking
 `Gia_ObjIsBuf`, `Gia_ObjIsXor` or `Gia_ObjIsMux` classifies all four as plain ANDs. The
 structure-preserving branch order used in `src/aig/gia/giaDup.c` is buffer first, then within the AND
-branch XOR, then MUX, then plain AND — see `src/aig/gia/giaDup.c:L1630-1640`.
+branch XOR, then MUX, then plain AND — see `src/aig/gia/giaDup.c:L1660-1670`.
 
 ```mermaid
 flowchart TD
@@ -689,14 +689,14 @@ meaning, who writes it and what selects it.
 | `iDiff1` | Backward offset to the second fanin | `Gia_ManAppendAnd` and the other non-terminal constructors | `fTerm` is clear | `src/aig/gia/gia.h:L1259-1271` |
 | `iDiff1` | Index of this object in the manager's combinational-input or combinational-output list | `Gia_ManAppendCi`, `Gia_ManAppendCo`, each taking the index *before* pushing | `fTerm` is set | `src/aig/gia/gia.h:L1217`, `src/aig/gia/gia.h:L1416` |
 | `iDiff1` | Read back as that index | `Gia_ObjCioId`, `Gia_ObjSetCioId`, both asserting `fTerm` | caller asserts a terminal | `src/aig/gia/gia.h:L746-747` |
-| `Value` | Copy literal during a rebuild, with `~0` meaning "not copied yet" | `Gia_ManFillValue` seeds `~0`; each append's return value overwrites it | a duplication or rebuild pass is running | `src/aig/gia/giaUtil.c:L449-454`, `src/aig/gia/giaDup.c:L1926-1927` |
+| `Value` | Copy literal during a rebuild, with `~0` meaning "not copied yet" | `Gia_ManFillValue` seeds `~0`; each append's return value overwrites it | a duplication or rebuild pass is running | `src/aig/gia/giaUtil.c:L449-454`, `src/aig/gia/giaDup.c:L1956-1957` |
 | `Value` | Generic application-specific scratch, per its declaration comment | any pass | no pass owns it | `src/aig/gia/gia.h:L204` |
 | `Value` | Frontier slot number, cleared to 0 at the end of the transform | `Gia_ManFrontTransform` | the frontier representation is in use | `src/aig/gia/giaFront.c:L80-90` |
 | `Value` | Claimed by an old note to hold the hash-table next-link — it does not | nothing | never; see item 1 of section 13 | `src/aig/gia/gia.h:L206-208` |
 | `fMark0`, `fMark1` | Two independent user-controlled marks, per their declaration comments | any pass; bulk-set and bulk-cleared by the five helpers in `src/aig/gia/giaUtil.c` | no other convention is active | `src/aig/gia/gia.h:L164`, `src/aig/gia/gia.h:L185`, `src/aig/gia/giaUtil.c:L249`, `src/aig/gia/giaUtil.c:L276`, `src/aig/gia/giaUtil.c:L302`, `src/aig/gia/giaUtil.c:L347`, `src/aig/gia/giaUtil.c:L373` |
 | `fMark0`, `fMark1` | One four-valued ternary-simulation state, packed as 00, 10, 01 and 11 | `Gia_ObjTerSimSetC`, `Set0`, `Set1`, `SetX`; read by the four matching getters | ternary simulation is running; the same three states are named as values by `GIA_ZER`, `GIA_ONE` and `GIA_UND` `src/aig/gia/gia.h:L1563-1565`, which the ternary-value helpers just below consume `src/aig/gia/gia.h:L1567-1583` | `src/aig/gia/gia.h:L1585-1588`, `src/aig/gia/gia.h:L1590-1593` |
 | `fMark0`, `fMark1` | A two-bit saturating fanout counter on each *fanin* of a new AND | `Gia_ManAppendAnd`, as `if ( pFan0->fMark0 ) pFan0->fMark1 = 1; else pFan0->fMark0 = 1;` | `p->fSweeper` is set | `src/aig/gia/gia.h:L1278-1283` |
-| `fMark0` | Delete marker: a marked object at index 1 or above is skipped and has its mark cleared, while a mark on object 0 is counted and never reached; buffers may not be marked, and the set has to be closed so that no surviving object names a marked one | callers mark, in every case in this tree through the passes in `src/aig/gia/giaScl.c`; `Gia_ManDupMarked` counts, skips and clears | a marked duplication is running | `src/aig/gia/giaDup.c:L1612-1613`, `src/aig/gia/giaDup.c:L1622`, `src/aig/gia/giaDup.c:L1624-1628`, `src/aig/gia/giaScl.c:L60-71`, `src/aig/gia/giaScl.c:L101-113`, `src/aig/gia/giaScl.c:L156-170` |
+| `fMark0` | Delete marker: a marked object at index 1 or above is skipped and has its mark cleared, while a mark on object 0 is counted and never reached; buffers may not be marked, and the set has to be closed so that no surviving object names a marked one | callers mark, in every case in this tree through the passes in `src/aig/gia/giaScl.c`; `Gia_ManDupMarked` counts, skips and clears | a marked duplication is running | `src/aig/gia/giaDup.c:L1642-1643`, `src/aig/gia/giaDup.c:L1652`, `src/aig/gia/giaDup.c:L1654-1658`, `src/aig/gia/giaScl.c:L60-71`, `src/aig/gia/giaScl.c:L101-113`, `src/aig/gia/giaScl.c:L156-170` |
 | `fPhase` | Value under the all-zero pattern, per its declaration comment | `Gia_ManSetPhase` over every object; `Gia_ManCleanPhase` clears it | the default convention | `src/aig/gia/gia.h:L194`, `src/aig/gia/giaUtil.c:L517-523`, `src/aig/gia/giaUtil.c:L583-589` |
 | `fPhase` | Value under a caller-supplied input pattern | `Gia_ManSetPhasePattern`, which asserts one entry per combinational input | that function has been called | `src/aig/gia/giaUtil.c:L524-534` |
 | `fPhase` | Value under the all-one input pattern | `Gia_ManSetPhase1`, which sets every combinational input to 1 first | that function has been called | `src/aig/gia/giaUtil.c:L555-564` |
@@ -709,7 +709,7 @@ Two of those rows deserve emphasis because choosing the wrong one is silent.
 **`Gia_ManFillValue` and `Gia_ManCleanValue` are not interchangeable.** The first writes `~0` into
 every `Value`, at `src/aig/gia/giaUtil.c:L452-453`; the second writes 0, at
 `src/aig/gia/giaUtil.c:L423-424`. The rebuild protocol tests "already copied" as `~pObj->Value`, for
-example at `src/aig/gia/giaDup.c:L1926-1927`, and `~0` is the only value for which that test is
+example at `src/aig/gia/giaDup.c:L1956-1957`, and `~0` is the only value for which that test is
 false. Seeding with 0 instead marks every object as already copied to literal 0.
 
 **`fPhase` is a shared field with no owner.** Any of the four phase helpers can have run last, and
@@ -996,9 +996,9 @@ awk '/^Gia_Man_t \* Gia_ManDup/ { if (name && !seen) print name; name=$3; seen=0
 names eight of the ninety whose bodies never touch the field at all: `Gia_ManDupCycled`
 `src/aig/gia/giaDup.c:L691`, `Gia_ManDupWithAttributes` `src/aig/gia/giaDup.c:L802`, `Gia_ManDupZero`
 `src/aig/gia/giaDup.c:L933`, `Gia_ManDupPermFlopGap` `src/aig/gia/giaDup.c:L1054`,
-`Gia_ManDupTopAnd_iter` `src/aig/gia/giaDup.c:L3014`, `Gia_ManDupOneHot`
-`src/aig/gia/giaDup.c:L4293`, `Gia_ManDupEncode` `src/aig/gia/giaDup.c:L6389` and
-`Gia_ManDupChoicesFinish` `src/aig/gia/giaDup.c:L6768`. They reach their result another way. Most
+`Gia_ManDupTopAnd_iter` `src/aig/gia/giaDup.c:L3044`, `Gia_ManDupOneHot`
+`src/aig/gia/giaDup.c:L4323`, `Gia_ManDupEncode` `src/aig/gia/giaDup.c:L6419` and
+`Gia_ManDupChoicesFinish` `src/aig/gia/giaDup.c:L6798`. They reach their result another way. Most
 delegate to another entry point that does the mapping for them — `Gia_ManDupWithAttributes` is
 `Gia_ManDup(p)` plus attribute transfers `src/aig/gia/giaDup.c:L804`, `Gia_ManDupCycled` ends at
 `Gia_ManDupFlip` `src/aig/gia/giaDup.c:L702`, and `Gia_ManDupPermFlopGap` composes
@@ -1012,10 +1012,10 @@ Among the ones that do use it, the visited discipline still differs. Straight-li
 iteration order: `Gia_ManDup` walks with `Gia_ManForEachObj1` `src/aig/gia/giaDup.c:L757`, so every
 fanin has been copied before it is read, and no sentinel is needed. Variants that skip objects or
 recurse call `Gia_ManFillValue` first, which writes `~0` into every `Value`
-`src/aig/gia/giaUtil.c:L449-454`: `Gia_ManDupDfs` calls it at `src/aig/gia/giaDup.c:L1941` and then
+`src/aig/gia/giaUtil.c:L449-454`: `Gia_ManDupDfs` calls it at `src/aig/gia/giaDup.c:L1971` and then
 uses `~0` as its visited test — `if ( ~pObj->Value )` guarding an early `return;` at
-`src/aig/gia/giaDup.c:L1926-1927` — and `Gia_ManDupMarked` calls it at
-`src/aig/gia/giaDup.c:L1614` and leaves the `Value` of every skipped object at `~0`.
+`src/aig/gia/giaDup.c:L1956-1957` — and `Gia_ManDupMarked` calls it at
+`src/aig/gia/giaDup.c:L1644` and leaves the `Value` of every skipped object at `~0`.
 
 Because the two disciplines order their calls differently, one diagram cannot show both honestly. The
 first traces `Gia_ManDup` `src/aig/gia/giaDup.c:L746-776` line by line — the iteration-order variant,
@@ -1042,61 +1042,68 @@ Diagram: the iteration-order copy protocol, traced against `src/aig/gia/giaDup.c
 no `Gia_ManFillValue` call in this function, and none is needed: `Gia_ManForEachObj1` reaches every
 fanin before its user.
 
-The second traces `Gia_ManDupDfs` `src/aig/gia/giaDup.c:L1933-1954`, the recursive variant. Note the
-order: the new manager is started *first*, at `src/aig/gia/giaDup.c:L1938`, and the source's `Value`
-field is filled with `~0` afterwards, at `src/aig/gia/giaDup.c:L1941`:
+The second traces `Gia_ManDupDfs` `src/aig/gia/giaDup.c:L1963-1984`, the recursive variant. Note the
+order: the new manager is started *first*, at `src/aig/gia/giaDup.c:L1968`, and the source's `Value`
+field is filled with `~0` afterwards, at `src/aig/gia/giaDup.c:L1971`:
 
 ```mermaid
 sequenceDiagram
     participant Pass as Gia_ManDupDfs
     participant Old as source manager p
     participant New as new manager pNew
-    Pass->>New: Gia_ManStart Gia_ManObjNum p - L1938
-    Pass->>Old: Gia_ManFillValue p writes ~0 into every Value - L1941
-    Pass->>Old: Gia_ManConst0 p Value set to 0 - L1942
-    loop Gia_ManForEachCi over p - every Ci unconditionally - L1943
+    Pass->>New: Gia_ManStart Gia_ManObjNum p - L1968
+    Pass->>Old: Gia_ManFillValue p writes ~0 into every Value - L1971
+    Pass->>Old: Gia_ManConst0 p Value set to 0 - L1972
+    loop Gia_ManForEachCi over p - every Ci unconditionally - L1973
         Pass->>New: Gia_ManAppendCi
-        New-->>Pass: literal stored into this Ci Value - L1944
+        New-->>Pass: literal stored into this Ci Value - L1974
     end
-    loop Gia_ManForEachCo over p - L1945
-        Pass->>Old: Gia_ManDupDfs_rec on Gia_ObjFanin0 - L1946
-        Note over Pass,Old: recursion returns at once when ~Value is true - L1926-L1927
+    loop Gia_ManForEachCo over p - L1975
+        Pass->>Old: Gia_ManDupDfs_rec on Gia_ObjFanin0 - L1976
+        Note over Pass,Old: recursion returns at once when ~Value is true - L1956-L1957
     end
-    loop Gia_ManForEachCo over p - every Co unconditionally - L1947
+    loop Gia_ManForEachCo over p - every Co unconditionally - L1977
         Pass->>New: Gia_ManAppendCo Gia_ObjFanin0Copy
-        New-->>Pass: literal stored into this Co Value - L1948
+        New-->>Pass: literal stored into this Co Value - L1978
     end
-    Pass->>New: Gia_ManSetRegNum Gia_ManRegNum p - L1949
+    Pass->>New: Gia_ManSetRegNum Gia_ManRegNum p - L1979
 ```
 
-Diagram: the recursive copy protocol, traced against `src/aig/gia/giaDup.c:L1933-1954` with the
-recursion body at `src/aig/gia/giaDup.c:L1924-1932`. `Gia_ManDupDfs_rec` appends its two fanins before
-itself `src/aig/gia/giaDup.c:L1929-1931`, so the new array still comes out topologically ordered even
+Diagram: the recursive copy protocol, traced against `src/aig/gia/giaDup.c:L1963-1984` with the
+recursion body at `src/aig/gia/giaDup.c:L1954-1962`. `Gia_ManDupDfs_rec` appends its two fanins before
+itself `src/aig/gia/giaDup.c:L1959-1961`, so the new array still comes out topologically ordered even
 though the walk is not in index order.
 
 Two properties of that recursion bound what it can be used on, and both are visible in the four lines
 of its body. The first is what survives. Every internal object goes through one unconditional
-`Gia_ManAppendAnd` `src/aig/gia/giaDup.c:L1931`, guarded by `assert( Gia_ObjIsAnd(pObj) )`
-`src/aig/gia/giaDup.c:L1928` — and `Gia_ObjIsAnd` is true of buffers, real XOR objects and real MUX
+`Gia_ManAppendAnd` `src/aig/gia/giaDup.c:L1961`, guarded by `assert( Gia_ObjIsAnd(pObj) )`
+`src/aig/gia/giaDup.c:L1958` — and `Gia_ObjIsAnd` is true of buffers, real XOR objects and real MUX
 objects as well as plain ANDs `src/aig/gia/gia.h:L780`, so the assertion admits all four while the
 constructor recreates only one. The interior it preserves is therefore plain-AND only, and each other
 kind fares differently: a real XOR loses the `iDiff0 < iDiff1` pattern that marked it, because
 `Gia_ManAppendAnd` normalizes the ordering `src/aig/gia/gia.h:L1259`; a real MUX loses its third
 fanin, because `pNew->pMuxes` is never allocated on this path and `Gia_ObjFanin2Copy` is never read;
-and a buffer, whose two fanin literals name one variable
-`src/aig/gia/gia.h:L1392-1393`, reaches the distinct-fanin assertion inside that constructor
-`src/aig/gia/gia.h:L1258`, which rejects it unless `p->fGiaSimple` is set. The precondition this
-amounts to is a plain-AIG interior: a source whose internal objects are all plain ANDs. It is not
-checked as such anywhere, and the observed failure mode for a buffer is the assertion, which the
-shipped build leaves live — `OPTFLAGS ?= -g -O` at `Makefile:L67` defines no `NDEBUG`.
+and a buffer, whose two fanin literals name one variable `src/aig/gia/gia.h:L1392-1393`, reaches the
+distinct-fanin assertion inside that constructor `src/aig/gia/gia.h:L1258`. That assertion reads the
+flag of the manager being appended to, and on this path that manager is `pNew` — the recursion's
+first parameter `src/aig/gia/giaDup.c:L1954`, the manager `Gia_ManAppendAnd` is called on
+`src/aig/gia/giaDup.c:L1961`, and the one `Gia_ManStart` returns `src/aig/gia/giaDup.c:L1968`.
+`Gia_ManStart` allocates it with `ABC_CALLOC` `src/aig/gia/giaMan.c:L72`, so `pNew->fGiaSimple`
+starts at zero, and nothing on this path assigns it: the assertion is live for a buffer whatever the
+source manager's own flag holds. With it compiled out the appended object has equal offsets, which
+`Gia_ObjIsBuf` `src/aig/gia/gia.h:L793` reads as a buffer while `pNew->nBufs` stays where it was.
+The precondition this amounts to is a plain-AIG interior: a source whose internal objects are all
+plain ANDs. It is not checked as such anywhere, and the observed failure mode for a buffer is the
+assertion, which the shipped build leaves live — `OPTFLAGS ?= -g -O` at `Makefile:L67` defines no
+`NDEBUG`.
 
 The second is depth. The recursion is not iterative and carries no explicit stack, so its call depth
-follows the logic depth of the cone being copied `src/aig/gia/giaDup.c:L1929-1930`. The code sets no
+follows the logic depth of the cone being copied `src/aig/gia/giaDup.c:L1959-1960`. The code sets no
 limit and the source records no measurement, so nothing here states what depth is safe.
 
 For a source that does hold buffers or real XOR and MUX objects, the structure-preserving variant is
-`Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1606`, whose four-way dispatch — buffer, then real XOR, then
-real MUX, then plain AND `src/aig/gia/giaDup.c:L1630-1640` — is set out further down this subsection.
+`Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1636`, whose four-way dispatch — buffer, then real XOR, then
+real MUX, then plain AND `src/aig/gia/giaDup.c:L1660-1670` — is set out further down this subsection.
 
 **Two entry points define the family's semantics, and they are not equivalent.**
 
@@ -1108,46 +1115,69 @@ real XOR therefore matches `Gia_ObjIsAnd` and is recreated by `Gia_ManAppendAnd`
 normalization `if ( iLit0 < iLit1 )` `src/aig/gia/gia.h:L1259` writes `iDiff0 >= iDiff1` — the
 `iDiff0 < iDiff1` pattern that marked it a real XOR is gone.
 
-`Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1606-1654` is the structure-preserving variant. It counts
-marked objects `src/aig/gia/giaDup.c:L1612-1613`, calls `Gia_ManFillValue`
-`src/aig/gia/giaDup.c:L1614`, sizes the new manager as `Gia_ManObjNum(p) - CountMarked`
-`src/aig/gia/giaDup.c:L1615`, allocates `pNew->pMuxes` when the source has one
-`src/aig/gia/giaDup.c:L1616-1617`, and dispatches buffer, then AND split into real XOR, real MUX and
+`Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1636-1684` is the structure-preserving variant. It counts
+marked objects `src/aig/gia/giaDup.c:L1642-1643`, calls `Gia_ManFillValue`
+`src/aig/gia/giaDup.c:L1644`, sizes the new manager as `Gia_ManObjNum(p) - CountMarked`
+`src/aig/gia/giaDup.c:L1645`, allocates `pNew->pMuxes` when the source has one
+`src/aig/gia/giaDup.c:L1646-1647`, and dispatches buffer, then AND split into real XOR, real MUX and
 plain AND, then combinational input, then combinational output
-`src/aig/gia/giaDup.c:L1630-1651`. It treats `fMark0` as a delete marker, asserting that no buffer is
-marked and clearing the mark as it skips `src/aig/gia/giaDup.c:L1624-1628`, and it finishes by
-asserting that the new manager is exactly full `src/aig/gia/giaDup.c:L1653`.
+`src/aig/gia/giaDup.c:L1660-1681`. It treats `fMark0` as a delete marker, asserting that no buffer is
+marked and clearing the mark as it skips `src/aig/gia/giaDup.c:L1654-1658`, and it finishes by
+asserting that the new manager is exactly full `src/aig/gia/giaDup.c:L1683`.
 
 The delete set itself is a precondition, and nothing in the function validates it. The copy assumes
-the set is closed under use: no surviving object may name a marked one through fanin 0, fanin 1 or the
-MUX control fanin. Three consequences follow when it is not, and none of them is reported as such. A
-marked object that a survivor still names keeps the `~0` that `Gia_ManFillValue` wrote, so
+the set is closed under use: no surviving object may name a marked one through fanin 0, fanin 1 or
+the MUX control fanin. Three consequences follow when it is not, and none of them is reported as
+such. A marked object that a survivor still names keeps the `~0` that `Gia_ManFillValue` wrote, so
 `Gia_ObjFanin0Copy` hands the constructor a negative literal, which the literal-range assertions
-`src/aig/gia/gia.h:L1256-1257` catch and a build defining `NDEBUG` turns into an out-of-range offset.
-A mark on object 0 is counted by the first walk `src/aig/gia/giaDup.c:L1612-1613` but never reached by
-the copy loop, which is `Gia_ManForEachObj1` and starts at index 1 `src/aig/gia/giaDup.c:L1622`, so the
-destination is sized one object short of what the copy appends and the closing exactly-full assertion
-`src/aig/gia/giaDup.c:L1653` is what notices. A marked buffer is refused outright by the assertion in
-the skip branch `src/aig/gia/giaDup.c:L1626`. Marks reached through `pReprs` and `pSibls` are the
-tolerated case rather than a fatal one: each transfer loop skips an object whose own `Value` or whose
-partner's `Value` is still `~0` `src/aig/gia/giaDup.c:L1664-1670` and
-`src/aig/gia/giaDup.c:L1683-1689`, so the link is dropped instead of rebuilt, which is also why the
-clearing walk described next follows those two links.
+`src/aig/gia/gia.h:L1256-1257` catch and a build defining `NDEBUG` turns into an out-of-range
+offset; a marked control fanin read through `Gia_ObjFanin2Copy` `src/aig/gia/giaDup.c:L1667` is the
+same case, caught instead by the control-literal assertion inside `Gia_ManAppendMuxReal`
+`src/aig/gia/gia.h:L1356`. A mark on object 0 is counted by the first walk
+`src/aig/gia/giaDup.c:L1642-1643` but never reached by the copy loop, which is `Gia_ManForEachObj1`
+and starts at index 1 `src/aig/gia/giaDup.c:L1652`, so that mark is still set on return and the
+destination is requested one object short of what the copy appends. Whether anything notices depends
+on the requested capacity, because the growth branch doubles it, clamped at 2^29
+`src/aig/gia/gia.h:L1164-1181`: a capacity of zero or less trips `Gia_ManStart`'s own
+`assert( nObjsMax > 0 )` `src/aig/gia/giaMan.c:L71` first; otherwise the copy appends exactly that
+many objects on top of the constant, so the walk ends with `nObjs` one above the requested capacity,
+and the closing exactly-full assertion `src/aig/gia/giaDup.c:L1683` holds only where the doubled
+capacity lands on that same number — at a requested capacity of 1, which doubles to 2 while `nObjs`
+reaches 2, and, with the clamp in play, at 2^29 - 1. At every other capacity of 2 or more the two end
+unequal and that assertion is what fires, so this is a capacity-dependent report rather than a
+guaranteed one. A marked buffer is refused outright by the assertion in the skip branch
+`src/aig/gia/giaDup.c:L1656`. Marks reached through `pReprs` and `pSibls` are the tolerated case
+rather than a fatal one: each transfer loop skips an object whose own `Value` or whose partner's
+`Value` is still `~0` `src/aig/gia/giaDup.c:L1694-1700` and `src/aig/gia/giaDup.c:L1713-1719`, so
+the link is dropped instead of rebuilt, which is also why the combinational clearing walk described
+next follows those two links.
 
 Every call site in the tree builds its set with one of the two marking passes in
 `src/aig/gia/giaScl.c` — `src/aig/gia/giaScl.c:L87`, `src/aig/gia/giaScl.c:L113` and
 `src/aig/gia/giaScl.c:L186`, `src/aig/gia/giaEquiv.c:L1049-1054`, and
-`src/aig/gia/giaFrames.c:L815-817` and `src/aig/gia/giaFrames.c:L915-917`. `Gia_ManCombMarkUsed`
-marks every AND-shaped object that is not a buffer, then clears the mark on everything reachable
-backwards from each buffer driver and each combinational-output driver — following fanin 0, fanin 1,
-the `pMuxes` control fanin and the `pNexts` and `pSibls` links `src/aig/gia/giaScl.c:L45-59` — so what
-stays marked is unreachable internal logic only `src/aig/gia/giaScl.c:L60-71`. `Gia_ManSeqMarkUsed`
-marks everything, clears object 0 and every primary input explicitly, then clears whatever the primary
-outputs reach, queueing each visited flop output's flop input as a further root
-`src/aig/gia/giaScl.c:L156-170`. `Gia_ManCleanupOutputs` runs the combinational pass and then also
-marks the first `nOutputs` combinational outputs, under an assertion that the manager holds no
-registers `src/aig/gia/giaScl.c:L101-113`; a marked combinational output drives nothing, so it cannot
-break the closure.
+`src/aig/gia/giaFrames.c:L815-817` and `src/aig/gia/giaFrames.c:L915-917` — and those two passes do
+not close over the same edges. `Gia_ManCombMarkUsed` marks every AND-shaped object that is not a
+buffer, then clears the mark on everything reachable backwards from each buffer driver and each
+combinational-output driver — following fanin 0, fanin 1, the `pMuxes` control fanin and the
+`pNexts` and `pSibls` links `src/aig/gia/giaScl.c:L45-59` — so what stays marked is unreachable
+internal logic only `src/aig/gia/giaScl.c:L60-71`; all three fanin edges are walked there.
+`Gia_ManSeqMarkUsed` marks everything, clears object 0 and every primary input explicitly, then
+clears whatever the primary outputs reach, queueing each visited flop output's flop input as a
+further root `src/aig/gia/giaScl.c:L156-170`. Its recursion descends through fanin 0 of a
+combinational output and through fanin 0 and fanin 1 of an AND `src/aig/gia/giaScl.c:L128-143`, and
+reads neither `p->pMuxes` nor `Gia_ObjFanin2`, so the set it leaves is closed over the two offset
+fanins only. A real MUX passes that recursion's `Gia_ObjIsAnd` assertion and is walked as an AND,
+while the copy reads a surviving real MUX's control fanin through `Gia_ObjFanin2Copy`
+`src/aig/gia/giaDup.c:L1667`: a control object that is neither object 0 nor a primary input, and
+that the recursion does not reach by some other edge, stays marked, so keeping it unmarked is a
+precondition the caller of a sequentially marked duplication carries. The two sequential paths are
+`Gia_ManSeqCleanup` `src/aig/gia/giaScl.c:L183-187` and the `fSeq` branch of
+`Gia_ManEquivReduceAndRemap` `src/aig/gia/giaEquiv.c:L1049-1054`. That pass also leaves the `pNexts`
+and `pSibls` links unwalked, which is the tolerated case above rather than a fatal one.
+`Gia_ManCleanupOutputs` runs the combinational pass and then also marks the first `nOutputs`
+combinational outputs, under an assertion that the manager holds no registers
+`src/aig/gia/giaScl.c:L101-113`; a marked combinational output drives nothing, so it cannot break
+the closure.
 
 Two smaller entry points show the same protocol used to merge one graph into another.
 `Gia_ManDupAppend` `src/aig/gia/giaDup.c:L1230-1248` starts the destination's hash table if it is not
@@ -1188,9 +1218,9 @@ That is ownership, not immutability; the two are distinct properties. A duplicat
 *writes into the source manager* as it works, because the copy map lives in the source's own objects.
 `Gia_ManDup` sets `Gia_ManConst0(p)->Value = 0` `src/aig/gia/giaDup.c:L756` and then writes a literal
 into the `Value` of every object of `p` it copies `src/aig/gia/giaDup.c:L760-770`.
-`Gia_ManDupMarked` goes further: it calls `Gia_ManFillValue( p )` `src/aig/gia/giaDup.c:L1614`, which
+`Gia_ManDupMarked` goes further: it calls `Gia_ManFillValue( p )` `src/aig/gia/giaDup.c:L1644`, which
 overwrites every `Value` in the source with `~0`, and it clears the source's `fMark0` on each object it
-skips `src/aig/gia/giaDup.c:L1624-1628` — so the marks a caller set on objects 1 and above are gone
+skips `src/aig/gia/giaDup.c:L1654-1658` — so the marks a caller set on objects 1 and above are gone
 when it returns, while a mark left on object 0, which that loop never reaches, is not.
 `Gia_ManDupCycled` brackets its work with `Gia_ManCleanMark0(p)` on the way in and on the way out
 `src/aig/gia/giaDup.c:L697` and `src/aig/gia/giaDup.c:L704`, which is the same field being used as
@@ -1369,7 +1399,7 @@ Each entry below is a place where correct-looking code is wrong.
    tests it first will never reach the more specific kinds. `Gia_ObjIsAndNotBuf`
    `src/aig/gia/gia.h:L796` exists for that reason, and the working order is the one
    `Gia_ManDupMarked` uses: buffer, then AND split into real XOR, real MUX and plain
-   `src/aig/gia/giaDup.c:L1630-1640`.
+   `src/aig/gia/giaDup.c:L1660-1670`.
 2. **There are two "none" sentinels, of two widths, differing by one hex digit.** `GIA_NONE` is
    `0x1FFFFFFF` and belongs to the 29-bit offset fields; `GIA_VOID` is `0x0FFFFFFF` and belongs to
    the 28-bit representative field `src/aig/gia/gia.h:L66-67`. Class code tests `GIA_VOID`
@@ -1388,17 +1418,17 @@ Each entry below is a place where correct-looking code is wrong.
 6. **`Gia_ManDup` and `Gia_ManDupMarked` are not interchangeable, and neither the names nor the
    `Synopsis` lines separate them.** `Gia_ManDup` `src/aig/gia/giaDup.c:L746` has no real-XOR and no
    real-MUX branch, so those objects are rebuilt as plain ANDs and lose their encoding;
-   `Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1606` preserves them. The two banners carry the identical
+   `Gia_ManDupMarked` `src/aig/gia/giaDup.c:L1636` preserves them. The two banners carry the identical
    `Synopsis` text `[Duplicates AIG without any changes.]`, at `src/aig/gia/giaDup.c:L711` and
    `src/aig/gia/giaDup.c:L1528`, so a reader scanning names and synopses alone sees two functions that
    look like the same thing. The distinction is stated in the `Description` of each banner —
-   `src/aig/gia/giaDup.c:L713-739` and `src/aig/gia/giaDup.c:L1530-1599` — so it is documented where a
+   `src/aig/gia/giaDup.c:L713-739` and `src/aig/gia/giaDup.c:L1530-1629` — so it is documented where a
    reader who opens the banner will find it, and invisible only to one who reads the one-line summary.
 7. **`Gia_ManCleanup` returns a new manager and does not free its input**
    `src/aig/gia/giaScl.c:L84-88`. The caller owns two managers after the call.
 8. **`Gia_ManFillValue` and `Gia_ManCleanValue` are not interchangeable.** `~0`
    `src/aig/gia/giaUtil.c:L452-453` is the sentinel the rebuild test `if ( ~pObj->Value )` looks for
-   `src/aig/gia/giaDup.c:L1926-1927`; `0` `src/aig/gia/giaUtil.c:L423-424` reads as a valid copy
+   `src/aig/gia/giaDup.c:L1956-1957`; `0` `src/aig/gia/giaUtil.c:L423-424` reads as a valid copy
    literal.
 9. **`Gia_ManHashAndTry` returns −1 on a miss** `src/aig/gia/giaHash.c:L803` and creates nothing,
    unlike every other `Gia_ManHash*` constructor. A caller that treats the result as a literal will
