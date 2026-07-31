@@ -61,13 +61,20 @@ toolchain — `gcc` on `x86_64` Linux, the `CC := gcc` of `Makefile:L2` with no 
 in the build. The command is:
 
 ```bash
-d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT
-printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu %%zu %%zu\\n",sizeof(Gia_Obj_t),sizeof(Gia_Man_t),sizeof(Gia_Rpr_t),sizeof(Gia_Plc_t));return 0;}\n' > "$d/probe.c"
-gcc -I src -DABC_USE_STDINT_H=1 -o "$d/probe" "$d/probe.c" -lm && "$d/probe"
+(
+  set -eu
+  d="$(mktemp -d)"
+  trap 'rm -rf -- "$d"' EXIT
+  printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu %%zu %%zu\\n",sizeof(Gia_Obj_t),sizeof(Gia_Man_t),sizeof(Gia_Rpr_t),sizeof(Gia_Plc_t));return 0;}\n' > "$d/probe.c"
+  gcc -I src -DABC_USE_STDINT_H=1 -o "$d/probe" "$d/probe.c" -lm
+  "$d/probe"
+)
 ```
 
-The workspace is a fresh directory from `mktemp -d`, and the trap removes it on exit, so nothing is
-written to a predictable shared path.
+The whole probe runs inside a subshell, which keeps `set -eu` and the `EXIT` trap scoped to it rather
+than to the shell it is pasted into. The workspace is a fresh directory from `mktemp -d`, assigned
+before the trap is installed and removed when the subshell exits; if `mktemp -d` fails, `set -e` ends
+the subshell before the first write, so the probe never falls back to a predictable path.
 
 It prints `12 1136 4 4`.
 
@@ -262,7 +269,7 @@ graph RL
 ```
 
 Diagram: offset resolution over the flat array. The two labelled arrows are the only edges the
-accessors establish, from `src/aig/gia/gia.h:L874` and `src/aig/gia/gia.h:L891`. Both targets of the
+accessors establish, from `src/aig/gia/gia.h:L874` and `src/aig/gia/gia.h:L875`. Both targets of the
 object at index *i* sit at lower indices, so both precede it. `p->pObjs[0]` is drawn only to fix the
 low end of the array and is deliberately unconnected — no edge to it is implied.
 
@@ -680,9 +687,14 @@ separate fact from the type's size: the same probe as section 1, extended with `
 `_Alignof(Gia_Obj_t)` as **4** while `sizeof(Gia_Obj_t)` is 12.
 
 ```bash
-d="$(mktemp -d)" && trap 'rm -rf "$d"' EXIT
-printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu\\n",sizeof(Gia_Obj_t),_Alignof(Gia_Obj_t));return 0;}\n' > "$d/probe.c"
-gcc -I src -DABC_USE_STDINT_H=1 -o "$d/probe" "$d/probe.c" -lm && "$d/probe"
+(
+  set -eu
+  d="$(mktemp -d)"
+  trap 'rm -rf -- "$d"' EXIT
+  printf '#include <stdio.h>\n#include "aig/gia/gia.h"\nint main(void){printf("%%zu %%zu\\n",sizeof(Gia_Obj_t),_Alignof(Gia_Obj_t));return 0;}\n' > "$d/probe.c"
+  gcc -I src -DABC_USE_STDINT_H=1 -o "$d/probe" "$d/probe.c" -lm
+  "$d/probe"
+)
 ```
 
 It prints `12 4`. Both numbers are measurements taken with the toolchain named in section 1, not
