@@ -47,7 +47,23 @@ extern void Gia_ManDfsSlacksPrint( Gia_Man_t * p );
 
   Synopsis    [Creates AIG.]
 
-  Description []
+  Description [Allocates a manager whose only object is the constant-0
+  object at index 0. ABC_CALLOC zero-fills the manager struct, so every
+  count, flag and side-array pointer starts at zero, and it zero-fills
+  the nObjsMax objects of p->pObjs, whose capacity is recorded in
+  p->nObjsAlloc. Object 0 becomes the constant because both of its
+  offset fields are set to GIA_NONE (gia.h:L66), which is exactly what
+  Gia_ObjIsConst0 tests (gia.h:L798); left merely zero-filled, that
+  object would instead be reported as an AND carrying two zero offsets
+  by Gia_ObjIsAnd (gia.h:L780). p->nObjs starts at 1 because index 0 is
+  spent on the constant, so the first appended object lands at index 1.
+  The two identifier lists p->vCis and p->vCos are requested at one
+  twentieth of the object budget, which Vec_IntAlloc rounds up to its
+  16-entry minimum for any smaller nonzero request
+  (misc/vec/vecInt.h:L102-103), and both grow on demand. nObjsMax is a
+  capacity hint rather than a limit: Gia_ManAppendObj doubles the object
+  array when it fills, capped at 2^29 objects, and at that one hard
+  ceiling it prints a message and calls exit(1) (gia.h:L1158-1180).]
                
   SideEffects []
 
@@ -72,7 +88,23 @@ Gia_Man_t * Gia_ManStart( int nObjsMax )
 
   Synopsis    [Deletes AIG.]
 
-  Description []
+  Description [Releases what the manager owns and then the manager
+  struct itself. Counted over the body by lines whose first token
+  matches, the teardown is 20 active ABC_FREE calls, one further
+  ABC_FREE that is commented out, and 73 calls to a Vec_ release helper
+  in its Free, FreeP, FreeFree or Erase form. The eight vectors that
+  Gia_Man_t embeds by value rather than by pointer -- vHash, vHTable,
+  vRefs, vCopies, vCopies2, vCopiesTwo, vSuppVars and vVarMap
+  (gia.h:L261-262, L266, L302-303, L422-424) -- go through Vec_IntErase,
+  which frees the array and zeroes the embedded descriptor rather than
+  freeing a descriptor of its own. Three releases are delegated:
+  Gia_ManStaticFanoutStop for the two static-fanout vectors,
+  Tim_ManStopP for the timing manager with its result checked by an
+  assertion, and Gia_ManStopP recursively for the nested manager
+  p->pAigExtra. The body closes with a run of seven ABC_FREE calls --
+  pRefs, pLutRefs, pMuxes, pObjs, pSpec, pName -- and finally the
+  manager struct. The commented-out release counted above is the one for
+  p->pMapping, and it sits between two live releases.]
                
   SideEffects []
 
@@ -186,7 +218,22 @@ void Gia_ManStop( Gia_Man_t * p )
 
   Synopsis    [Returns memory used in megabytes.]
 
-  Description []
+  Description [Sums fourteen terms: the manager struct, the object array,
+  the two identifier lists, the hash table, the reference array when it
+  is present, and the level, cell-mapping, copy, arrival, required and
+  three name vectors. The value returned is a byte count carried as a
+  double, and the reporting sites divide it by (1<<20) before printing,
+  as the statistics line in this file does. The pointer-held vectors
+  contribute nothing while they are unallocated, whereas the copy term
+  is taken through &p->vCopies, an address that is never null because
+  that vector is embedded by value, so it contributes sizeof(Vec_Int_t)
+  even when empty (misc/vec/vecInt.h:L428-431). The sum is a subset of
+  what Gia_ManStop releases rather than an inventory of what the manager
+  owns: pMuxes, pTravIds, pReprs, pReprsOld, pNexts, pSibls, pLutRefs,
+  pFanData, pName, pSpec and most of the other Vec_ members are released
+  by teardown and counted nowhere here, so the figure understates the
+  footprint. Allocation in Gia_ManStart and release in Gia_ManStop are
+  where ownership itself is visible.]
                
   SideEffects []
 
@@ -216,7 +263,12 @@ double Gia_ManMemory( Gia_Man_t * p )
 
   Synopsis    [Stops the AIG manager.]
 
-  Description []
+  Description [Stops the manager held in a caller's slot and clears the
+  slot. It returns without acting when *p is NULL, so a slot that was
+  never filled or has already been released costs nothing, and it assigns
+  NULL to *p once Gia_ManStop has returned, so no dangling manager
+  address is left behind to be released twice or dereferenced.
+  Gia_ManStop uses this same form on the nested manager p->pAigExtra.]
                
   SideEffects []
 
@@ -756,7 +808,20 @@ void Gia_ManPrintStatsMiter( Gia_Man_t * p, int fVerbose )
 
   Synopsis    [Prints stats for the AIG.]
 
-  Description []
+  Description [Records how many of the manager's combinational inputs and
+  outputs belong to flops, and touches nothing else. The count has to be
+  stored because it is what partitions the two identifier lists
+  positionally: Gia_ManPiNum is Vec_IntSize(p->vCis) - p->nRegs and
+  Gia_ManPoNum is Vec_IntSize(p->vCos) - p->nRegs (gia.h:L700-701), and
+  Gia_ManRo and Gia_ManRi reach flop v by adding the primary count to v
+  (gia.h:L729-730). That positional split is what obliges a client to
+  create all primary inputs before flop outputs and all primary outputs
+  before flop inputs, and to call this function once both lists are
+  complete (readmeaig:L35, L41, L42). The assertion tests the current
+  value of p->nRegs rather than counting calls: a second call is rejected
+  only because the first left a nonzero count behind, and a call whose
+  argument is 0 leaves the field at 0, after which the assertion passes
+  again. It reads as "the register count has not been set yet".]
                
   SideEffects []
 
