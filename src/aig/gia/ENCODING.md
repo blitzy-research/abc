@@ -67,9 +67,12 @@ gcc -I src -DABC_USE_STDINT_H=1 -o /tmp/probe /tmp/probe.c -lm && /tmp/probe
 
 It prints `12 1136 4 4`.
 
-This description was written against branch `master` at commit `17cadca08`. The line numbers belong
-to that commit, and the measured values belong to that commit compiled by the toolchain named above;
-a reader on a later commit, or with a different toolchain, can re-run the probe and compare.
+This description was written against branch `master` at commit `17cadca08`. Every line number in it,
+here and in the source index in section 11, is a line number at that commit, and any later edit to a
+cited file shifts the numbers that follow the edit. Read a locator as "this file, at about here, at
+that commit", and confirm it by searching the file for the construct named. The measured values
+belong to that commit compiled by the toolchain named above; a reader on a later commit, or with a
+different toolchain, can re-run the probe and compare.
 
 ## 2. The Three Words
 
@@ -849,84 +852,85 @@ that object also satisfies `iDiff0 == iDiff1`.
 ## 11. Source Index
 
 Every locator this document cites, with the claim it establishes. Measurements are not listed here,
-since no line of source states them; each is given with its probe command where it appears. Each
-citation is also a relative link to that range — `./gia.h` and its neighbours resolve from this
-directory, files elsewhere under `src/` from two levels up, and `readmeaig`, `Makefile` and
-`test/gia/gia_test.cc` from the repository root — so a claim can be opened where it is made. The
-citation text is unchanged by the linking, so the same strings remain greppable, and a viewer that
-ignores the `#Lnnn` fragment still lands on the right file.
+since no line of source states them; each is given with its probe command where it appears.
+
+Locators are written as plain `path:Lrange` text rather than as links, so that each one stays
+greppable and none of them can silently point somewhere else once the files are edited. Paths are
+given from the repository root; the files named `gia*.c` and `gia*.h` sit in this directory. To open
+a claim, search the named file for the construct the claim describes rather than jumping to the line
+number, which is only accurate at the commit named in section 1.
 
 | Section | Claim | Source |
 |---|---|---|
-| 1 | Object declaration under discussion | [`src/aig/gia/gia.h:L76-90`](./gia.h#L76-L90) |
-| 1 | Client recipe lives in the root document | [`readmeaig:L26`](../../../readmeaig#L26) |
-| 1 | Compiler the measurements were taken with, unpinned in the build | [`Makefile:L2`](../../../Makefile#L2) |
-| 5, 6 | The fanin accessor block the encoding is read through | [`src/aig/gia/gia.h:L543-574`](./gia.h#L543-L574) |
-| 2 | Typedef, struct name, braces, members, blank separators | [`src/aig/gia/gia.h:L76`](./gia.h#L76), [`L77`](./gia.h#L77), [`L78`](./gia.h#L78), [`L79-89`](./gia.h#L79-L89), [`L83`](./gia.h#L83), [`L88`](./gia.h#L88), [`L90`](./gia.h#L90) |
-| 2 | Word 1 members `iDiff0`, `fCompl0`, `fMark0`, `fTerm` | [`src/aig/gia/gia.h:L79-82`](./gia.h#L79-L82) |
-| 2 | Word 2 members `iDiff1`, `fCompl1`, `fMark1`, `fPhase` | [`src/aig/gia/gia.h:L84-87`](./gia.h#L84-L87) |
-| 2 | Word 3 member `Value` | [`src/aig/gia/gia.h:L89`](./gia.h#L89) |
-| 2 | `Value` note listing two of its uses | [`src/aig/gia/gia.h:L91-93`](./gia.h#L91-L93) |
-| 2 | `Gia_ObjValue` and `Gia_ObjSetValue` | [`src/aig/gia/gia.h:L500-501`](./gia.h#L500-L501) |
-| 2, 3 | Fanin resolution by subtraction, address form and identifier form | [`src/aig/gia/gia.h:L549`](./gia.h#L549), [`L550`](./gia.h#L550), [`L556`](./gia.h#L556), [`L557`](./gia.h#L557) |
-| 2, 8 | `Gia_ObjFaninC0` and `Gia_ObjFaninC1` | [`src/aig/gia/gia.h:L545-546`](./gia.h#L545-L546) |
-| 3 | Object array allocated zero-filled | [`src/aig/gia/giaMan.c:L63`](./giaMan.c#L63) |
-| 3 | Growth doubling capped at 2^29 | [`src/aig/gia/gia.h:L686`](./gia.h#L686) |
-| 3 | Reallocation and zeroing of the grown tail | [`src/aig/gia/gia.h:L693-694`](./gia.h#L693-L694) |
-| 3 | `p->pMuxes` grown and zeroed in parallel | [`src/aig/gia/gia.h:L695-699`](./gia.h#L695-L699) |
-| 3 | New object handed out by the growth helper | [`src/aig/gia/gia.h:L703`](./gia.h#L703) |
-| 3 | Identifier from address, with range assertion | [`src/aig/gia/gia.h:L497`](./gia.h#L497) |
-| 3 | Frontier representation, and conversion back to offsets | [`src/aig/gia/giaFront.c:L9`](./giaFront.c#L9), [`L65-93`](./giaFront.c#L65-L93), [`L76`](./giaFront.c#L76), [`L81-82`](./giaFront.c#L81-L82) |
-| 4 | The two sentinel definitions | [`src/aig/gia/gia.h:L45-46`](./gia.h#L45-L46) |
-| 4 | `GIA_NONE` written into both offsets of object 0 | [`src/aig/gia/giaMan.c:L64`](./giaMan.c#L64) |
-| 4 | `GIA_NONE` written into a combinational input's `iDiff0` | [`src/aig/gia/gia.h:L709`](./gia.h#L709) |
-| 4 | Predicates that test against `GIA_NONE` | [`src/aig/gia/gia.h:L512`](./gia.h#L512), [`L513`](./gia.h#L513), [`L514`](./gia.h#L514), [`L519`](./gia.h#L519), [`L522`](./gia.h#L522) |
-| 4 | `Gia_Rpr_t` and its 28-bit representative field | [`src/aig/gia/gia.h:L57-65`](./gia.h#L57-L65), [`L60-64`](./gia.h#L60-L64) |
-| 4 | Equivalence-class code keying on `GIA_VOID` | [`src/aig/gia/gia.h:L1065`](./gia.h#L1065), [`L1067`](./gia.h#L1067), [`L1068`](./gia.h#L1068), [`L1093-1094`](./gia.h#L1093-L1094), [`L1100`](./gia.h#L1100) |
-| 4 | `Gia_Plc_t` fields and their source comments | [`src/aig/gia/gia.h:L67-74`](./gia.h#L67-L74), [`L70`](./gia.h#L70), [`L71`](./gia.h#L71), [`L72`](./gia.h#L72), [`L73`](./gia.h#L73) |
-| 5 | Seventeen `Gia_ManAppend` definitions, one of them the growth helper | [`src/aig/gia/gia.h:L682-914`](./gia.h#L682-L914), [`L682`](./gia.h#L682) |
-| 5 | The six constructors that write an object directly | [`src/aig/gia/gia.h:L707`](./gia.h#L707), [`L720`](./gia.h#L720), [`L764`](./gia.h#L764), [`L789`](./gia.h#L789), [`L819`](./gia.h#L819), [`L831`](./gia.h#L831) |
-| 5 | Constant-0 established by `Gia_ManStart` | [`src/aig/gia/giaMan.c:L57-69`](./giaMan.c#L57-L69), [`L64`](./giaMan.c#L64), [`L65`](./giaMan.c#L65) |
-| 5, 7 | `Gia_ManAppendCi` field writes, list push and return | [`src/aig/gia/gia.h:L705-713`](./gia.h#L705-L713), [`L708`](./gia.h#L708), [`L709`](./gia.h#L709), [`L710`](./gia.h#L710), [`L711`](./gia.h#L711), [`L712`](./gia.h#L712) |
-| 5, 7 | `Gia_ManAppendCo` field writes, driver assertion, list push, fanout, return | [`src/aig/gia/gia.h:L826-840`](./gia.h#L826-L840), [`L830`](./gia.h#L830), [`L832`](./gia.h#L832), [`L833`](./gia.h#L833), [`L834`](./gia.h#L834), [`L835`](./gia.h#L835), [`L836`](./gia.h#L836), [`L837-838`](./gia.h#L837-L838), [`L839`](./gia.h#L839) |
-| 5, 6 | `Gia_ManAppendAnd` branches and side effects | [`src/aig/gia/gia.h:L718-761`](./gia.h#L718-L761), [`L723`](./gia.h#L723), [`L724`](./gia.h#L724), [`L726-729`](./gia.h#L726-L729), [`L733-736`](./gia.h#L733-L736), [`L738-742`](./gia.h#L738-L742), [`L743-750`](./gia.h#L743-L750), [`L751-757`](./gia.h#L751-L757), [`L758-759`](./gia.h#L758-L759), [`L760`](./gia.h#L760) |
-| 5, 6 | `Gia_ManAppendXorReal`, including the commented-out assertions | [`src/aig/gia/gia.h:L762-786`](./gia.h#L762-L786), [`L767`](./gia.h#L767), [`L768-769`](./gia.h#L768-L769), [`L770`](./gia.h#L770), [`L772-775`](./gia.h#L772-L775), [`L784`](./gia.h#L784), [`L785`](./gia.h#L785) |
-| 5, 6 | `Gia_ManAppendMuxReal` and the control literal in the side array | [`src/aig/gia/gia.h:L787-816`](./gia.h#L787-L816), [`L790`](./gia.h#L790), [`L794`](./gia.h#L794), [`L798`](./gia.h#L798), [`L800-803`](./gia.h#L800-L803), [`L804`](./gia.h#L804), [`L812`](./gia.h#L812), [`L814`](./gia.h#L814), [`L815`](./gia.h#L815) |
-| 5, 6 | `Gia_ManAppendBuf` writing both offsets in one statement | [`src/aig/gia/gia.h:L817-825`](./gia.h#L817-L825), [`L821`](./gia.h#L821), [`L822`](./gia.h#L822), [`L823`](./gia.h#L823), [`L824`](./gia.h#L824) |
-| 5 | The two mark bits read together as one four-valued state | [`src/aig/gia/gia.h:L946-949`](./gia.h#L946-L949), [`L951-954`](./gia.h#L951-L954) |
-| 5 | Structural composites: `Or`, `Mux`, `Maj`, `Xor` | [`src/aig/gia/gia.h:L841-844`](./gia.h#L841-L844), [`L845-850`](./gia.h#L845-L850), [`L851-857`](./gia.h#L851-L857), [`L858-861`](./gia.h#L858-L861) |
-| 5 | Constant-folding `*2` variants | [`src/aig/gia/gia.h:L863-877`](./gia.h#L863-L877), [`L865`](./gia.h#L865), [`L876`](./gia.h#L876), [`L878-881`](./gia.h#L878-L881), [`L882-887`](./gia.h#L882-L887), [`L888-894`](./gia.h#L888-L894), [`L895-898`](./gia.h#L895-L898), [`L900-914`](./gia.h#L900-L914), [`L913`](./gia.h#L913) |
-| 6 | The fourteen kind predicates | [`src/aig/gia/gia.h:L510-523`](./gia.h#L510-L523) |
-| 6 | Hashing-layer swap conditions | [`src/aig/gia/giaHash.c:L483`](./giaHash.c#L483), [`L540-541`](./giaHash.c#L540-L541), [`L599`](./giaHash.c#L599) |
-| 6, 10 | `Gia_ObjFaninNum` dispatch order | [`src/aig/gia/gia.h:L573`](./gia.h#L573) |
-| 7 | `Gia_ObjCioId` and `Gia_ObjSetCioId`, each asserting `fTerm` | [`src/aig/gia/gia.h:L498-499`](./gia.h#L498-L499) |
-| 7 | Primary versus flop discrimination by index | [`src/aig/gia/gia.h:L533-536`](./gia.h#L533-L536) |
-| 7 | `Gia_ManPatchCoDriver` and its backward-offset assertion | [`src/aig/gia/gia.h:L916-922`](./gia.h#L916-L922), [`L919`](./gia.h#L919), [`L920`](./gia.h#L920), [`L921`](./gia.h#L921) |
-| 7 | `Gia_ObjFlipFaninC0` asserting a combinational output | [`src/aig/gia/gia.h:L572`](./gia.h#L572) |
-| 7 | Frontier slots converted back to offsets on existing objects, and written on new ones | [`src/aig/gia/giaFront.c:L65-93`](./giaFront.c#L65-L93), [`L76`](./giaFront.c#L76), [`L81-82`](./giaFront.c#L81-L82), [`L198`](./giaFront.c#L198), [`L216-221`](./giaFront.c#L216-L221) |
-| 7 | Matched primary outputs redirected to object 0 | [`src/aig/gia/giaEquiv.c:L882-897`](./giaEquiv.c#L882-L897), [`L892`](./giaEquiv.c#L892), [`L894`](./giaEquiv.c#L894) |
-| 7 | One fanin offset rewritten with its complement bit toggled, on a duplicate manager | [`src/aig/gia/giaSimBase.c:L2959-2981`](./giaSimBase.c#L2959-L2981), [`L2966`](./giaSimBase.c#L2966), [`L2970-2972`](./giaSimBase.c#L2970-L2972) |
-| 7 | File-local helper making a primary output drive object 0 | [`src/sat/bmc/bmcChain.c:L261-266`](../../sat/bmc/bmcChain.c#L261-L266), [`L264`](../../sat/bmc/bmcChain.c#L264) |
-| 7 | File-local `Gia_ManPatchBufDriver` helper, first declaration | [`src/base/wln/wlnRead.c:L2642-2648`](../../base/wln/wlnRead.c#L2642-L2648), [`L2646`](../../base/wln/wlnRead.c#L2646) |
-| 7 | File-local `Gia_ManPatchBufDriver` helper, second declaration | [`src/base/abc/abcHieGia.c:L272-279`](../../base/abc/abcHieGia.c#L272-L279), [`L277`](../../base/abc/abcHieGia.c#L277) |
-| 7 | Fanin offsets swapped temporarily, whole object saved and restored | [`src/proof/acec/acecXor.c:L448`](../../proof/acec/acecXor.c#L448), [`L453`](../../proof/acec/acecXor.c#L453), [`L458`](../../proof/acec/acecXor.c#L458), [`L464`](../../proof/acec/acecXor.c#L464) |
-| 7 | Commented-out offset write, left as found | [`src/aig/gia/giaCTas.c:L1593`](./giaCTas.c#L1593) |
-| 8 | Literal helpers | [`src/misc/util/abc_global.h:L308-310`](../../misc/util/abc_global.h#L308-L310), [`L311`](../../misc/util/abc_global.h#L311), [`L312`](../../misc/util/abc_global.h#L312) |
-| 8 | Include path from `gia.h` to those helpers | [`src/aig/gia/gia.h:L34`](./gia.h#L34), [`src/misc/vec/vec.h:L29`](../../misc/vec/vec.h#L29) |
-| 8 | Every object-writing constructor returns an uncomplemented literal | [`src/aig/gia/gia.h:L712`](./gia.h#L712), [`L760`](./gia.h#L760), [`L785`](./gia.h#L785), [`L815`](./gia.h#L815), [`L824`](./gia.h#L824), [`L839`](./gia.h#L839) |
-| 8 | Constant-literal helpers | [`src/aig/gia/gia.h:L458-462`](./gia.h#L458-L462) |
-| 8 | Tagged-address helpers | [`src/aig/gia/gia.h:L464-467`](./gia.h#L464-L467) |
-| 8 | `Gia_ManConst0` and `Gia_ManConst1` | [`src/aig/gia/gia.h:L487-488`](./gia.h#L487-L488) |
-| 8 | `Gia_Obj2Lit` and `Gia_Lit2Obj` | [`src/aig/gia/gia.h:L525-526`](./gia.h#L525-L526) |
-| 8 | `Gia_ObjChild0`, `Gia_ObjChild1`, `Gia_ObjFaninLit0`, `Gia_ObjFaninLit1` | [`src/aig/gia/gia.h:L553-554`](./gia.h#L553-L554), [`L564-565`](./gia.h#L564-L565) |
-| 8 | `Gia_ObjFaninC2` reading the side array | [`src/aig/gia/gia.h:L547`](./gia.h#L547) |
-| 8 | `Gia_ObjPhase` and `Gia_ObjPhaseReal` | [`src/aig/gia/gia.h:L502`](./gia.h#L502), [`L503`](./gia.h#L503) |
-| 9 | The test case and its namespace wrappers | [`test/gia/gia_test.cc:L32-52`](../../../test/gia/gia_test.cc#L32-L52), [`L5`](../../../test/gia/gia_test.cc#L5), [`L54`](../../../test/gia/gia_test.cc#L54) |
-| 9 | The five construction calls | [`test/gia/gia_test.cc:L33`](../../../test/gia/gia_test.cc#L33), [`L35`](../../../test/gia/gia_test.cc#L35), [`L36`](../../../test/gia/gia_test.cc#L36), [`L38`](../../../test/gia/gia_test.cc#L38), [`L39`](../../../test/gia/gia_test.cc#L39) |
-| 9 | Stimulus, simulation, assertions, teardown | [`test/gia/gia_test.cc:L41`](../../../test/gia/gia_test.cc#L41), [`L42-43`](../../../test/gia/gia_test.cc#L42-L43), [`L44`](../../../test/gia/gia_test.cc#L44), [`L46-47`](../../../test/gia/gia_test.cc#L46-L47), [`L49`](../../../test/gia/gia_test.cc#L49), [`L50`](../../../test/gia/gia_test.cc#L50), [`L51`](../../../test/gia/gia_test.cc#L51) |
-| 9 | The hashing path used by the client recipe instead | [`readmeaig:L37`](../../../readmeaig#L37) |
-| 9 | A pass writing an object's own identifier into `iDiff0` | [`src/aig/gia/giaEquiv.c:L892`](./giaEquiv.c#L892) |
-| 10 | Third input held outside the object | [`src/aig/gia/gia.h:L804`](./gia.h#L804), [`L812`](./gia.h#L812), [`L551`](./gia.h#L551), [`L547`](./gia.h#L547) |
-| 10 | Hard object-count limit and process exit | [`src/aig/gia/gia.h:L686`](./gia.h#L686), [`L687-688`](./gia.h#L687-L688) |
-| 10 | Fanin-distinctness assertion relaxed under `p->fGiaSimple` | [`src/aig/gia/gia.h:L723`](./gia.h#L723), [`L519`](./gia.h#L519) |
-| 10 | Constant-0 recognition by field pattern and by address | [`src/aig/gia/gia.h:L522`](./gia.h#L522), [`L523`](./gia.h#L523) |
+| 1 | Object declaration under discussion | `src/aig/gia/gia.h:L76-90` |
+| 1 | Client recipe lives in the root document | `readmeaig:L26` |
+| 1 | Compiler the measurements were taken with, unpinned in the build | `Makefile:L2` |
+| 5, 6 | The fanin accessor block the encoding is read through | `src/aig/gia/gia.h:L543-574` |
+| 2 | Typedef, struct name, braces, members, blank separators | `src/aig/gia/gia.h:L76`, `L77`, `L78`, `L79-89`, `L83`, `L88`, `L90` |
+| 2 | Word 1 members `iDiff0`, `fCompl0`, `fMark0`, `fTerm` | `src/aig/gia/gia.h:L79-82` |
+| 2 | Word 2 members `iDiff1`, `fCompl1`, `fMark1`, `fPhase` | `src/aig/gia/gia.h:L84-87` |
+| 2 | Word 3 member `Value` | `src/aig/gia/gia.h:L89` |
+| 2 | `Value` note listing two of its uses | `src/aig/gia/gia.h:L91-93` |
+| 2 | `Gia_ObjValue` and `Gia_ObjSetValue` | `src/aig/gia/gia.h:L500-501` |
+| 2, 3 | Fanin resolution by subtraction, address form and identifier form | `src/aig/gia/gia.h:L549`, `L550`, `L556`, `L557` |
+| 2, 8 | `Gia_ObjFaninC0` and `Gia_ObjFaninC1` | `src/aig/gia/gia.h:L545-546` |
+| 3 | Object array allocated zero-filled | `src/aig/gia/giaMan.c:L63` |
+| 3 | Growth doubling capped at 2^29 | `src/aig/gia/gia.h:L686` |
+| 3 | Reallocation and zeroing of the grown tail | `src/aig/gia/gia.h:L693-694` |
+| 3 | `p->pMuxes` grown and zeroed in parallel | `src/aig/gia/gia.h:L695-699` |
+| 3 | New object handed out by the growth helper | `src/aig/gia/gia.h:L703` |
+| 3 | Identifier from address, with range assertion | `src/aig/gia/gia.h:L497` |
+| 3 | Frontier representation, and conversion back to offsets | `src/aig/gia/giaFront.c:L9`, `L65-93`, `L76`, `L81-82` |
+| 4 | The two sentinel definitions | `src/aig/gia/gia.h:L45-46` |
+| 4 | `GIA_NONE` written into both offsets of object 0 | `src/aig/gia/giaMan.c:L64` |
+| 4 | `GIA_NONE` written into a combinational input's `iDiff0` | `src/aig/gia/gia.h:L709` |
+| 4 | Predicates that test against `GIA_NONE` | `src/aig/gia/gia.h:L512`, `L513`, `L514`, `L519`, `L522` |
+| 4 | `Gia_Rpr_t` and its 28-bit representative field | `src/aig/gia/gia.h:L57-65`, `L60-64` |
+| 4 | Equivalence-class code keying on `GIA_VOID` | `src/aig/gia/gia.h:L1065`, `L1067`, `L1068`, `L1093-1094`, `L1100` |
+| 4 | `Gia_Plc_t` fields and their source comments | `src/aig/gia/gia.h:L67-74`, `L70`, `L71`, `L72`, `L73` |
+| 5 | Seventeen `Gia_ManAppend` definitions, one of them the growth helper | `src/aig/gia/gia.h:L682-914`, `L682` |
+| 5 | The six constructors that write an object directly | `src/aig/gia/gia.h:L707`, `L720`, `L764`, `L789`, `L819`, `L831` |
+| 5 | Constant-0 established by `Gia_ManStart` | `src/aig/gia/giaMan.c:L57-69`, `L64`, `L65` |
+| 5, 7 | `Gia_ManAppendCi` field writes, list push and return | `src/aig/gia/gia.h:L705-713`, `L708`, `L709`, `L710`, `L711`, `L712` |
+| 5, 7 | `Gia_ManAppendCo` field writes, driver assertion, list push, fanout, return | `src/aig/gia/gia.h:L826-840`, `L830`, `L832`, `L833`, `L834`, `L835`, `L836`, `L837-838`, `L839` |
+| 5, 6 | `Gia_ManAppendAnd` branches and side effects | `src/aig/gia/gia.h:L718-761`, `L723`, `L724`, `L726-729`, `L733-736`, `L738-742`, `L743-750`, `L751-757`, `L758-759`, `L760` |
+| 5, 6 | `Gia_ManAppendXorReal`, including the commented-out assertions | `src/aig/gia/gia.h:L762-786`, `L767`, `L768-769`, `L770`, `L772-775`, `L784`, `L785` |
+| 5, 6 | `Gia_ManAppendMuxReal` and the control literal in the side array | `src/aig/gia/gia.h:L787-816`, `L790`, `L794`, `L798`, `L800-803`, `L804`, `L812`, `L814`, `L815` |
+| 5, 6 | `Gia_ManAppendBuf` writing both offsets in one statement | `src/aig/gia/gia.h:L817-825`, `L821`, `L822`, `L823`, `L824` |
+| 5 | The two mark bits read together as one four-valued state | `src/aig/gia/gia.h:L946-949`, `L951-954` |
+| 5 | Structural composites: `Or`, `Mux`, `Maj`, `Xor` | `src/aig/gia/gia.h:L841-844`, `L845-850`, `L851-857`, `L858-861` |
+| 5 | Constant-folding `*2` variants | `src/aig/gia/gia.h:L863-877`, `L865`, `L876`, `L878-881`, `L882-887`, `L888-894`, `L895-898`, `L900-914`, `L913` |
+| 6 | The fourteen kind predicates | `src/aig/gia/gia.h:L510-523` |
+| 6 | Hashing-layer swap conditions | `src/aig/gia/giaHash.c:L483`, `L540-541`, `L599` |
+| 6, 10 | `Gia_ObjFaninNum` dispatch order | `src/aig/gia/gia.h:L573` |
+| 7 | `Gia_ObjCioId` and `Gia_ObjSetCioId`, each asserting `fTerm` | `src/aig/gia/gia.h:L498-499` |
+| 7 | Primary versus flop discrimination by index | `src/aig/gia/gia.h:L533-536` |
+| 7 | `Gia_ManPatchCoDriver` and its backward-offset assertion | `src/aig/gia/gia.h:L916-922`, `L919`, `L920`, `L921` |
+| 7 | `Gia_ObjFlipFaninC0` asserting a combinational output | `src/aig/gia/gia.h:L572` |
+| 7 | Frontier slots converted back to offsets on existing objects, and written on new ones | `src/aig/gia/giaFront.c:L65-93`, `L76`, `L81-82`, `L198`, `L216-221` |
+| 7 | Matched primary outputs redirected to object 0 | `src/aig/gia/giaEquiv.c:L882-897`, `L892`, `L894` |
+| 7 | One fanin offset rewritten with its complement bit toggled, on a duplicate manager | `src/aig/gia/giaSimBase.c:L2959-2981`, `L2966`, `L2970-2972` |
+| 7 | File-local helper making a primary output drive object 0 | `src/sat/bmc/bmcChain.c:L261-266`, `L264` |
+| 7 | File-local `Gia_ManPatchBufDriver` helper, first declaration | `src/base/wln/wlnRead.c:L2642-2648`, `L2646` |
+| 7 | File-local `Gia_ManPatchBufDriver` helper, second declaration | `src/base/abc/abcHieGia.c:L272-279`, `L277` |
+| 7 | Fanin offsets swapped temporarily, whole object saved and restored | `src/proof/acec/acecXor.c:L448`, `L453`, `L458`, `L464` |
+| 7 | Commented-out offset write, left as found | `src/aig/gia/giaCTas.c:L1593` |
+| 8 | Literal helpers | `src/misc/util/abc_global.h:L308-310`, `L311`, `L312` |
+| 8 | Include path from `gia.h` to those helpers | `src/aig/gia/gia.h:L34`, `src/misc/vec/vec.h:L29` |
+| 8 | Every object-writing constructor returns an uncomplemented literal | `src/aig/gia/gia.h:L712`, `L760`, `L785`, `L815`, `L824`, `L839` |
+| 8 | Constant-literal helpers | `src/aig/gia/gia.h:L458-462` |
+| 8 | Tagged-address helpers | `src/aig/gia/gia.h:L464-467` |
+| 8 | `Gia_ManConst0` and `Gia_ManConst1` | `src/aig/gia/gia.h:L487-488` |
+| 8 | `Gia_Obj2Lit` and `Gia_Lit2Obj` | `src/aig/gia/gia.h:L525-526` |
+| 8 | `Gia_ObjChild0`, `Gia_ObjChild1`, `Gia_ObjFaninLit0`, `Gia_ObjFaninLit1` | `src/aig/gia/gia.h:L553-554`, `L564-565` |
+| 8 | `Gia_ObjFaninC2` reading the side array | `src/aig/gia/gia.h:L547` |
+| 8 | `Gia_ObjPhase` and `Gia_ObjPhaseReal` | `src/aig/gia/gia.h:L502`, `L503` |
+| 9 | The test case and its namespace wrappers | `test/gia/gia_test.cc:L32-52`, `L5`, `L54` |
+| 9 | The five construction calls | `test/gia/gia_test.cc:L33`, `L35`, `L36`, `L38`, `L39` |
+| 9 | Stimulus, simulation, assertions, teardown | `test/gia/gia_test.cc:L41`, `L42-43`, `L44`, `L46-47`, `L49`, `L50`, `L51` |
+| 9 | The hashing path used by the client recipe instead | `readmeaig:L37` |
+| 9 | A pass writing an object's own identifier into `iDiff0` | `src/aig/gia/giaEquiv.c:L892` |
+| 10 | Third input held outside the object | `src/aig/gia/gia.h:L804`, `L812`, `L551`, `L547` |
+| 10 | Hard object-count limit and process exit | `src/aig/gia/gia.h:L686`, `L687-688` |
+| 10 | Fanin-distinctness assertion relaxed under `p->fGiaSimple` | `src/aig/gia/gia.h:L723`, `L519` |
+| 10 | Constant-0 recognition by field pattern and by address | `src/aig/gia/gia.h:L522`, `L523` |

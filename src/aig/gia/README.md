@@ -176,7 +176,7 @@ it holds 135 entries: 123 `.c` files, 4 `.cpp` files, 7 `.h` files and one `modu
 Markdown documents — this file and [`./ENCODING.md`](./ENCODING.md) — sit alongside them and are not
 part of that source count. `src/aig/gia/module.make` enumerates 119 build sources, being 115 of the
 `.c` files and all 4 `.cpp` files, the latter named `giaDecGraph.cpp`, `giaRrr.cpp`,
-`giaTransduction.cpp` and `giaTtopt.cpp`. The seven headers, by line count, are `gia.h` at 1880
+`giaTransduction.cpp` and `giaTtopt.cpp`. The seven headers, by line count, are `gia.h` at 2654
 lines, `giaTransduction.h` at 1768, `giaNewBdd.h` at 869, `giaNewTt.h` at 292, `giaCSatP.h` at 117,
 `giaAig.h` at 78 and `giaIiff.h` at 54.
 
@@ -216,7 +216,7 @@ almost all of it:
 
 | Read | Lines | What it holds |
 |---|---|---|
-| `src/aig/gia/gia.h` | 1880 | The whole declared contract: both structs, the two sentinels, 314 `static inline` primitives, 62 `ForEach` iterator macros, 68 `#define` directives, 516 `extern` declarations, the fourteen kind predicates and the sixteen object constructors |
+| `src/aig/gia/gia.h` | 2654 | The whole declared contract: both structs, the two sentinels, 314 `static inline` primitives, 62 `ForEach` iterator macros, 68 `#define` directives, 516 `extern` declarations, the fourteen kind predicates and the sixteen object constructors |
 | `src/aig/gia/giaMan.c` | 2415 | Manager lifecycle and ownership: `Gia_ManStart` `src/aig/gia/giaMan.c:L57`, `Gia_ManStop` `src/aig/gia/giaMan.c:L82`, `Gia_ManMemory` `src/aig/gia/giaMan.c:L196`, `Gia_ManStopP` `src/aig/gia/giaMan.c:L226`, `Gia_ManSetRegNum` `src/aig/gia/giaMan.c:L766` |
 | `src/aig/gia/giaHash.c` | 1145 | Structural hashing end to end: the key function, the chain walk, the table lifecycle, the AND, real XOR and real MUX entry points, and the canonical rebuild |
 | `src/aig/gia/giaDup.c` | 6676 | Duplication and rebuild. Counting definitions that return a new manager, with `grep -cE '^Gia_Man_t \* Gia_ManDup' src/aig/gia/giaDup.c`, gives 90 entry points |
@@ -390,7 +390,8 @@ subsystem or another and are irrelevant to the representation. Grouped by role:
 | Retiming and box iteration | `src/aig/gia/gia.h:L246-253` | `vStopsF` and `vStopsB`; then the four box-boundary indices under the comment at `src/aig/gia/gia.h:L249` |
 | ISOP and MFFC scratch | `src/aig/gia/gia.h:L254-258` | `vTTISOPs`, `vTTLut`, `vMFFCsInfo`, `vMFFCsLuts`, `vLutsRankings` |
 
-Of the 153 declaration lines, 25 carry no comment at all. They are exactly the built-in simulation
+All 153 declaration lines carry a comment. Twenty-five of them describe members that the declaration
+by itself does not explain, and those twenty-five cluster: the built-in simulation
 block at `src/aig/gia/gia.h:L209-222`, the incremental simulation block at
 `src/aig/gia/gia.h:L224-227`, `pUData` at `src/aig/gia/gia.h:L245`, the two retiming stop vectors at
 `src/aig/gia/gia.h:L247-248`, and the four box-boundary indices at `src/aig/gia/gia.h:L250-253`.
@@ -1089,7 +1090,7 @@ creating new ones `src/aig/gia/giaDup.c:L1161`. `Gia_ManDupAppendShare`
 **Ownership.** A duplicating call returns a new manager and does not free the input; freeing it is the
 caller's business, which is what the `pTemp` swap idiom at `src/aig/gia/giaHash.c:L766-767` does.
 
-That is ownership, not immutability, and the two should not be confused. A duplicating call routinely
+That is ownership, not immutability; the two are distinct properties. A duplicating call routinely
 *writes into the source manager* as it works, because the copy map lives in the source's own objects.
 `Gia_ManDup` sets `Gia_ManConst0(p)->Value = 0` `src/aig/gia/giaDup.c:L730` and then writes a literal
 into the `Value` of every object of `p` it copies `src/aig/gia/giaDup.c:L734-744`.
@@ -1400,7 +1401,8 @@ The twelve items below were found while writing this document. They are recorded
    holds the next node in the hash table during structural hashing. The chain is not in the object:
    bucket heads are in `p->vHTable` and next links are in `p->vHash`, indexed by object identifier
    `src/aig/gia/giaHash.c:L54-68`, which is why `Gia_ManAppendObj` pushes one `vHash` entry per new
-   object `src/aig/gia/gia.h:L702`. The comment text was not edited.
+   object `src/aig/gia/gia.h:L702`. The comment text was not edited; a separate note recording where
+   the chain actually lives sits immediately below it.
 2. **A C23 keyword in a C translation unit.** `Gia_ManEvalCutHashing`
    `src/aig/gia/giaCut.c:L1078` contains `Vec_Int_t vTemp = {0, 0, nullptr};`
    `src/aig/gia/giaCut.c:L1081`. `nullptr` is a keyword in C23 and not in earlier C, and the makefile
@@ -1469,7 +1471,11 @@ The twelve items below were found while writing this document. They are recorded
 | [`./gia.h`](./gia.h) | The package's own table of contents: the `/*===` group markers from `src/aig/gia/gia.h:L1277` to `src/aig/gia/gia.h:L1837`, which say which file implements what |
 | [`./giaMan.c`](./giaMan.c), [`./giaHash.c`](./giaHash.c), [`./giaDup.c`](./giaDup.c), [`./giaUtil.c`](./giaUtil.c) | The four implementation files this document draws on, in the reading order given in section 3 |
 
-This description was written against branch `master` at commit `17cadca08`. Claims about the code
+This description was written against branch `master` at commit `17cadca08`. Every line number in it
+is a line number at that commit, and any later edit to a cited file shifts the numbers that follow
+the edit, so a locator reads as "this file, at about here, at that commit" and is confirmed by
+searching the named file for the construct described; the counts and the measured sizes were
+re-checked against the files as they stand in this checkout. Claims about the code
 above cite the file and line range they came from, measurements name the probe that produced them,
 counts name the file or command they were derived from, and the places where the source settles
 nothing are marked as such — the four kinds are set out at the top of this document. A reader who
