@@ -180,7 +180,32 @@ Vec_Ptr_t * Gia_GetFakeNames( int nNames, int fCaps )
 
   Synopsis    []
 
-  Description []
+  Description [Advances the traversal-identifier generation counter, and owns the side array
+  that counter indexes. The mechanism sits outside the object: p->pTravIds holds one int per
+  object and p->nTravIds holds the current generation, so an object counts as marked exactly
+  when its entry equals p->nTravIds, which is what Gia_ObjIsTravIdCurrent in gia.h returns.
+  Advancing the generation therefore invalidates every mark at once, an O(1) clear rather than
+  a walk over the objects, and avoids the collisions the shared fMark0 and fMark1 bits carry.
+  On the first call, p->pTravIds still being the NULL a zeroed manager left there, the array is
+  allocated lazily at Gia_ManObjNum(p) + 100 entries and p->nTravIds is reset to 0. A while
+  loop then doubles p->nTravIdsAlloc, reallocates and zeroes the newly added half until the
+  allocation covers the object count, so both the initial margin and each doubling leave spare
+  entries above it. The closing p->nTravIds++ is the generation advance itself, and in steady
+  state that is all a call does.
+  The traversal-identifier accessors in gia.h each reach p->pTravIds only past an assertion
+  that the identifier is below p->nTravIdsAlloc, and none of them allocates or grows anything,
+  so a further call here is required only once an appended object's identifier reaches that
+  bound. The spare entries are zeroed, by the ABC_CALLOC on the first call and by the memset in
+  the growth loop, so they do not equal the current generation, which is at least 1 once this
+  function has run. Gia_ObjSetTravIdPrevious and its Id form write p->nTravIds - 1 rather than
+  p->nTravIds, which is what makes the previous generation readable through the accessors, and
+  current and previous are the only comparisons they offer.
+  This function is the only code that allocates or grows the pTravIds of a Gia_Man_t, and
+  Gia_ManStop releases it. The two-generation limit belongs to those accessors rather than to
+  the storage, an entry being a plain int holding whatever generation last wrote it: passes that
+  address the entries directly do their own generation arithmetic and are not confined to those
+  two generations, giaUnate.c:L124-136 working with differences of up to three and
+  giaResub2.c:L738-740 copying one object's entry onto another.]
                
   SideEffects []
 
@@ -208,7 +233,13 @@ void Gia_ManIncrementTravId( Gia_Man_t * p )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [Clears both user marks, fMark0 and fMark1, on every object of the manager,
+  through one Gia_ManForEachObj walk that starts at the constant-0 object and ends at the last
+  object appended, so the cost is linear in the object count and no object is skipped.
+  Both bits are shared, and this function does not know which meaning it is erasing: a
+  four-valued ternary-simulation state reads back as C, a sweeper fanout count reads back as no
+  fanout, and a delete marker awaiting Gia_ManDupMarked in giaDup.c is gone. README.md section
+  8 tabulates every meaning of the pair together with what selects it.]
                
   SideEffects []
 
@@ -227,7 +258,15 @@ void Gia_ManCleanMark01( Gia_Man_t * p )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [Sets fMark0 to 1 on every object of the manager through one Gia_ManForEachObj
+  walk, the constant-0 object and the terminals included, at a cost linear in the object count.
+  fMark1 is left alone.
+  The bit is shared, so the assignment overwrites whichever of its other meanings was in force -
+  the low half of the packed ternary-simulation state, the first bit of the sweeper fanout
+  counter, or the delete marker Gia_ManDupMarked in giaDup.c reads - and leaves every object
+  reading as ternary 0 or X according to fMark1, every fanout count reading as at least one
+  fanout, and every object reading as marked. Gia_ManCleanMark0 below returns the field to 0 and
+  Gia_ManCheckMark0 below that asserts it.]
                
   SideEffects []
 
@@ -246,7 +285,14 @@ void Gia_ManSetMark0( Gia_Man_t * p )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [Clears fMark0 on every object of the manager through one Gia_ManForEachObj walk,
+  the constant-0 object and the terminals included, at a cost linear in the object count.
+  fMark1 is left alone, which is the only difference from Gia_ManCleanMark01 above.
+  The bit is shared, so this clears whichever meaning it was carrying - the low half of the
+  packed ternary-simulation state, the first bit of the sweeper fanout counter, or the delete
+  marker Gia_ManDupMarked in giaDup.c reads. Gia_ManDupMarked clears each marked object's fMark0
+  as it consumes it, so the markers it acted on are already gone when it returns.
+  Gia_ManCheckMark0 below asserts the state this function establishes.]
                
   SideEffects []
 
@@ -284,7 +330,14 @@ void Gia_ManCheckMark0( Gia_Man_t * p )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [Sets fMark1 to 1 on every object of the manager through one Gia_ManForEachObj
+  walk, the constant-0 object and the terminals included, at a cost linear in the object count.
+  fMark0 is left alone.
+  fMark1 is the partner of fMark0 in both packed conventions, being the high half of the packed
+  ternary-simulation state and the second bit of the sweeper fanout counter, so the assignment
+  leaves every object reading as ternary 1 or X according to fMark0 and every fanout count
+  reading as saturated. The delete marker Gia_ManDupMarked in giaDup.c reads lives in fMark0 and
+  is not touched here. Gia_ManCleanMark1 below returns the field to 0.]
                
   SideEffects []
 
@@ -303,7 +356,14 @@ void Gia_ManSetMark1( Gia_Man_t * p )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [Clears fMark1 on every object of the manager through one Gia_ManForEachObj walk,
+  the constant-0 object and the terminals included, at a cost linear in the object count.
+  fMark0 is left alone, so a delete marker set for Gia_ManDupMarked in giaDup.c survives this
+  call while the packed ternary-simulation state and the saturating fanout count do not: both of
+  those read the fMark0 and fMark1 pair together, so clearing one half rewrites the value their
+  readers in gia.h return. A state that read as 1 reads back as C, one that read as X reads back
+  as 0, and a saturated fanout count reads back as a single fanout. Gia_ManCheckMark1 below
+  asserts the state this function establishes.]
                
   SideEffects []
 
@@ -341,7 +401,16 @@ void Gia_ManCheckMark1( Gia_Man_t * p )
 
   Synopsis    [Cleans the value.]
 
-  Description []
+  Description [Writes 0 into the Value word of every object, walking p->pObjs by index from 0 to
+  p->nObjs - 1, so the constant-0 object and the terminals are included and the cost is linear
+  in the object count.
+  This is not the equivalent of Gia_ManFillValue just below, which writes ~0. A copy protocol
+  encodes "not copied yet" in Value as all ones and tests the field as
+  `if ( ~pObj->Value ) return;`, as Gia_ManDupDfs_rec in giaDup.c does, a test that is false
+  only when the field holds ~0; seeded with 0 instead, an object reads as already copied and the
+  copy it names is literal 0. Outside a rebuild Value is the object's general scratch word,
+  which is what its declaration in gia.h calls it, and this function returns every one of them
+  to 0.]
                
   SideEffects []
 
@@ -359,7 +428,18 @@ void Gia_ManCleanValue( Gia_Man_t * p )
 
   Synopsis    [Cleans the value.]
 
-  Description []
+  Description [Writes ~0, all ones, into the Value word of every object, by the same index walk
+  over p->pObjs that Gia_ManCleanValue above uses, so it too covers the constant-0 object and
+  the terminals at a cost linear in the object count.
+  All ones is not an arbitrary filler: it is the "not copied yet" marker of the Value copy
+  protocol, the route most of the duplication family takes rather than all of it. In a pass that
+  runs the protocol each source object's Value holds that object's copy literal in the
+  destination manager once the pass has copied it, and the duplicators ask whether the copy
+  exists with `if ( ~pObj->Value ) return;`, as Gia_ManDupDfs_rec in giaDup.c does; the
+  complement of all ones is the only zero that test can see, so exactly the objects still
+  holding the marker fall through to be rebuilt, and an object the pass never reaches or
+  deliberately skips is still holding it when the pass ends. Gia_ManCleanCopyArray in gia.h
+  fills the flat copy map with -1, the same all-ones word read through a signed slot.]
                
   SideEffects []
 
@@ -410,7 +490,24 @@ void Gia_ObjSetPhase( Gia_Man_t * p, Gia_Obj_t * pObj )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [Gia_ManSetPhase walks every object in array order and hands each one to
+  Gia_ObjSetPhase above. That helper leaves fPhase at 0 on the constant-0 object and on every
+  combinational input, and derives it for everything else from the fanins: a conjunction for an
+  AND, an exclusive-or for a real XOR, a selection for a real MUX, and the driver's value through
+  a combinational output, each fanin phase taken with that edge's complement bit. One forward
+  pass in array order suffices because a fanin offset is always backward, so both fanins of an
+  object are final before the object is reached. What the field then holds is the value each
+  object takes when every combinational input is 0, which is the meaning its declaration in
+  gia.h states.
+  Gia_ManSetPhasePattern runs the same propagation from a caller-supplied assignment. It asserts
+  one entry per combinational input, seeds each combinational input's fPhase from vCiValues at
+  that input's Gia_ObjCioId, and calls Gia_ObjSetPhase on every other object; the entry lands in
+  a one-bit field, so only its low bit survives, and afterwards fPhase is the value under that
+  pattern rather than under the all-zero pattern.
+  Either call overwrites whichever fPhase convention was in force, including the conjunction of
+  fanin phases Gia_ManAppendAnd in gia.h writes while p->fSweeper or p->fBuiltInSim is set, and
+  nothing in the object records which one it holds. README.md section 8 lists the conventions
+  and what selects each.]
                
   SideEffects []
 
@@ -440,7 +537,15 @@ void Gia_ManSetPhasePattern( Gia_Man_t * p, Vec_Int_t * vCiValues )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [The all-ones counterpart of Gia_ManSetPhase above. It first writes 1 into fPhase
+  on every combinational input, walking p->vCis through Gia_ManForEachCi so that primary inputs
+  and flop outputs are covered alike, and then calls Gia_ObjSetPhase on every object that is not
+  a combinational input, in array order. Skipping the combinational inputs on the second walk is
+  what preserves those 1s, since Gia_ObjSetPhase writes 0 over any object that is neither an AND
+  nor a combinational output; the constant-0 object is not a combinational input, so it passes
+  through that helper and keeps fPhase at 0. The field afterwards holds the value each object
+  takes when every combinational input is 1, and it overwrites whichever convention was in
+  force.]
                
   SideEffects []
 
@@ -462,7 +567,13 @@ void Gia_ManSetPhase1( Gia_Man_t * p )
 
   Synopsis    [Sets phases of the internal nodes.]
 
-  Description []
+  Description [Clears fPhase on every object of the manager in one Gia_ManForEachObj walk, at a
+  cost linear in the object count, and is the counterpart of the three setters above.
+  The field has no owner, so what this discards depends on which of them ran last: the value
+  under the all-zero pattern from Gia_ManSetPhase, the value under a caller's pattern from
+  Gia_ManSetPhasePattern, the value under the all-ones pattern from Gia_ManSetPhase1, or the
+  conjunction of fanin phases Gia_ManAppendAnd in gia.h writes while p->fSweeper or
+  p->fBuiltInSim is set. Nothing in the object records which one it was.]
                
   SideEffects []
 

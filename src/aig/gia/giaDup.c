@@ -710,7 +710,33 @@ Gia_Man_t * Gia_ManDupCycled( Gia_Man_t * p, Abc_Cex_t * pCex, int nFrames )
 
   Synopsis    [Duplicates AIG without any changes.]
 
-  Description []
+  Description [Rebuilds every object of p into a fresh manager sized
+  Gia_ManObjNum(p), walking with Gia_ManForEachObj1, which starts at
+  index 1 and so leaves the constant to the seed Value of 0 set just
+  before the loop. The copy map is the source's own Value field: each
+  append returns a literal in the new manager, that literal is stored
+  into the source object's Value, and the fanins of later objects are
+  resolved through Gia_ObjFanin0Copy and Gia_ObjFanin1Copy in gia.h,
+  which read the fanin's Value and reapply the stored complement bit.
+  Buffers are rebuilt by Gia_ManAppendBuf, choices survive because
+  pNew->pSibls is allocated when Gia_ManHasChoices(p) holds and is
+  filled from Gia_ObjSibl as the ANDs are copied, the register count is
+  carried over by Gia_ManSetRegNum, and a sequential counter-example is
+  copied when p->pCexSeq is set.
+  What this entry point does not carry over is single-object XOR and MUX
+  structure. There is no Gia_ObjIsXor branch and no Gia_ObjIsMux branch
+  here, and pNew->pMuxes is never allocated. Gia_ObjIsAnd in gia.h is
+  true of a real XOR and of a real MUX as well as of a plain AND, so
+  both reach Gia_ManAppendAnd, whose ordering normalization always
+  leaves iDiff0 >= iDiff1, while Gia_ObjIsXor marks a real XOR only by
+  iDiff0 < iDiff1 - so that tag is gone from the copy. MUX-ness cannot
+  survive either, because Gia_ObjIsMux reads p->pMuxes and the new
+  manager has none. Gia_ManDupMarked below is the variant that keeps
+  both, dispatching real XOR and real MUX explicitly; its Synopsis is
+  worded identically to this one, so neither the names nor the synopses
+  separate the two. Ninety definitions in this file return a new
+  manager, counting the lines that begin at column one with Gia_Man_t
+  followed by a name starting Gia_ManDup.]
                
   SideEffects []
 
@@ -1137,7 +1163,34 @@ Gia_Man_t * Gia_ManDupRandPerm( Gia_Man_t * p, int fVerbose )
 
   Synopsis    [Appends second AIG without any changes.]
 
-  Description []
+  Description [Both functions below append the whole of pTwo into an
+  existing destination manager pNew and return void, unlike the members
+  of this family that build and return a manager of their own. Both open
+  with a lazy hash-table start - if pNew->vHTable is still empty they
+  call Gia_ManHashStart - and both copy through the Value protocol
+  Gia_ManDup uses. Gia_ManDupAppend zeroes pNew->nRegs when it is
+  positive, and its fShareCis flag chooses between reusing the
+  destination's existing input of the same Gia_ObjCioId and appending a
+  fresh one; its ANDs go through Gia_ManAppendAnd, the raw constructor,
+  which performs no lookup and enters nothing into the table, so they
+  are not merged against logic pNew already holds. Gia_ManDupAppendShare
+  asserts that the two managers hold equal combinational-input counts,
+  always shares, and rebuilds its ANDs through Gia_ManHashAnd, which
+  merges structurally equal logic rather than copying it.
+  Two preconditions are unchecked here. The interior of pTwo has to be
+  plain ANDs, because neither function tests a kind narrower than
+  Gia_ObjIsAnd, which in gia.h is true of a buffer, a real XOR and a
+  real MUX as well: a real XOR is rebuilt as a conjunction, a real MUX
+  keeps only its two data fanins since neither function reads its
+  control or allocates pNew->pMuxes, and a buffer arrives as two equal
+  literals, which the hashing constructor folds away and the raw
+  constructor's distinct-fanin assertion rejects unless pNew->fGiaSimple
+  is set. And wherever inputs are shared, pNew has to hold at least as
+  many combinational inputs as pTwo, since both sharing paths index the
+  destination with the source object's own Gia_ObjCioId. Section 9 of
+  src/aig/gia/README.md works both preconditions through in full.
+  Gia_ManDupAppendNew further below is neither of the two: it starts a
+  new manager rather than appending into one.]
                
   SideEffects []
 
@@ -1444,7 +1497,36 @@ Gia_Man_t * Gia_ManDupFlopClass( Gia_Man_t * p, int iClass )
 
   Synopsis    [Duplicates AIG without any changes.]
 
-  Description []
+  Description [The structure-preserving duplicator, and the one that
+  reads fMark0 as a delete marker: a marked object is skipped instead of
+  being copied. It counts the marks in one walk, calls Gia_ManFillValue
+  to seed every Value of p with ~0, sizes the new manager as
+  Gia_ManObjNum(p) - CountMarked so that it has room for exactly the
+  survivors, and allocates pNew->pMuxes whenever p->pMuxes exists.
+  The skip writes into the input: every marked object the copy loop
+  reaches has its fMark0 cleared before the loop moves on, and a marked
+  buffer is asserted never to occur. That loop is Gia_ManForEachObj1 and
+  so starts at index 1, so the marks a caller set on objects 1 and above
+  are gone when this returns while a mark left on object 0 is not, and
+  the Values Gia_ManFillValue overwrote are gone either way.
+  Nothing here validates the delete set, and the copy assumes it is
+  closed under use: no surviving object may name a marked one through
+  fanin 0, fanin 1, or the MUX control fanin that Gia_ObjFanin2Copy
+  reads for a surviving real MUX. A marked object a survivor still names
+  keeps its ~0 seed, so a constructor is handed a negative literal.
+  A survivor is dispatched buffer first, then AND, with real XOR, real
+  MUX and plain AND tested in that order inside the AND case, because
+  Gia_ObjIsAnd in gia.h is true of all four kinds; that dispatch is how
+  the copy keeps the offset ordering and the pMuxes entry that mark real
+  XOR and real MUX, where Gia_ManDup above keeps neither. Afterwards it
+  checks that the flop-output and flop-input counts agree, sets the
+  register count, rebuilds pNew->pReprs and pNew->pNexts when the source
+  carries both, and transfers choices into pNew->pSibls when the source
+  has them, each transfer loop skipping a pair whose own or whose
+  partner's Value is still ~0, so a link to a deleted object is dropped
+  rather than rebuilt. Section 9 of src/aig/gia/README.md carries the
+  wider account: which passes build delete sets, what each closes over,
+  and what the closing assertion does and does not catch.]
                
   SideEffects []
 
@@ -1739,7 +1821,30 @@ Gia_Man_t * Gia_ManDupDfs2( Gia_Man_t * p )
 
   Synopsis    [Duplicates the AIG in the DFS order.]
 
-  Description []
+  Description [Gia_ManDupDfs_rec below is a post-order recursion whose
+  visited set is the Value field itself. Gia_ManFillValue seeds every
+  Value of p with ~0, and ~(~0) is 0, so `if ( ~pObj->Value ) return;`
+  is false while an object is still uncopied and true once a copy
+  literal has replaced the seed, stopping a second descent into shared
+  logic. Gia_ManCleanValue, writing 0, is no substitute: ~0 is nonzero,
+  so every object would read as copied. The body recurses into both
+  fanins before appending, so Gia_ObjFanin0Copy and Gia_ObjFanin1Copy
+  always find a literal, and it appends through one unconditional
+  Gia_ManAppendAnd under an assert( Gia_ObjIsAnd(pObj) ) that admits
+  buffers and real XOR and real MUX objects too, Gia_ObjIsAnd in gia.h
+  being true of all three. The interior it preserves is therefore
+  plain-AND only: a real XOR loses its iDiff0 < iDiff1 tag to that
+  constructor's ordering normalization, a real MUX loses its third fanin
+  because pNew->pMuxes is never allocated, and a buffer arrives as two
+  literals on one variable, which that constructor's distinct-fanin
+  assertion rejects. Gia_ManDupDfs drives it: fill the Values, seed the
+  constant with 0, append every combinational input, recurse from each
+  combinational-output driver, append every combinational output, set
+  the register count, copy nConstrs, and duplicate p->pCexSeq if set.
+  Both terminal walks are unconditional, so every combinational input
+  and output survives and only internal logic is confined to the output
+  cones, in recursion-completion rather than source index order. The
+  recursion is not iterative, so its depth follows the logic depth.]
                
   SideEffects []
 

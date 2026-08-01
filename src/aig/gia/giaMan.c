@@ -47,7 +47,18 @@ extern void Gia_ManDfsSlacksPrint( Gia_Man_t * p );
 
   Synopsis    [Creates AIG.]
 
-  Description []
+  Description [Allocates a manager whose only object is the constant-0
+  object at index 0. The manager struct and the nObjsMax objects of
+  p->pObjs are both zero-filled, and that capacity is recorded in
+  p->nObjsAlloc. Object 0 becomes the constant because both of its offset
+  fields are set to GIA_NONE, which is what Gia_ObjIsConst0 in gia.h
+  tests; left merely zero-filled it would be reported instead as an AND
+  carrying two zero offsets. p->nObjs starts at 1 because index 0 is
+  spent on the constant, so the first appended object lands at index 1.
+  nObjsMax is an initial capacity rather than a limit, since
+  Gia_ManAppendObj in gia.h grows the object array on demand, and the two
+  identifier lists p->vCis and p->vCos likewise grow from the size
+  requested here.]
                
   SideEffects []
 
@@ -72,7 +83,23 @@ Gia_Man_t * Gia_ManStart( int nObjsMax )
 
   Synopsis    [Deletes AIG.]
 
-  Description []
+  Description [Releases what the manager owns and then the manager struct
+  itself. The releases fall into three kinds. Members held by pointer go
+  through an ABC_FREE or a Vec_ release helper in its Free, FreeP or
+  FreeFree form, the P forms tolerating a member that was never
+  allocated. The vectors that Gia_Man_t embeds by value rather than by
+  pointer -- vHash, vHTable, vRefs, vCopies, vCopies2, vCopiesTwo,
+  vSuppVars and vVarMap -- go through Vec_IntErase instead, which frees
+  the element array and zeroes the embedded descriptor rather than
+  freeing a descriptor of its own. Three releases are delegated:
+  Gia_ManStaticFanoutStop for the two static-fanout vectors, Tim_ManStopP
+  for the timing manager -- it returns void and nulls the p->pManTime
+  field handed to it, and the assertion on the line after the call
+  verifies that postcondition -- and Gia_ManStopP recursively for the
+  nested manager p->pAigExtra. The
+  object array, the spec and the name are released at the end and the
+  manager struct last of all, so no member is read after the storage
+  holding it is gone.]
                
   SideEffects []
 
@@ -186,7 +213,23 @@ void Gia_ManStop( Gia_Man_t * p )
 
   Synopsis    [Returns memory used in megabytes.]
 
-  Description []
+  Description [Returns an approximate size in bytes of the allocations it
+  sums explicitly: the manager struct, the flat object array, the two
+  combinational-I/O identifier lists, the hash table, the reference array
+  when p->pRefs is present, and the level, cell-mapping, copy, arrival,
+  required and three name vectors. The first two terms are where the
+  representation's own cost shows: sizeof(Gia_Man_t) is 1136 bytes, paid
+  once per graph, and sizeof(Gia_Obj_t) is 12 bytes, paid once per object
+  and priced here over Gia_ManObjNum(p) live objects rather than over the
+  nObjsAlloc the array is capable of holding. The returned double is
+  unscaled; reporting sites divide it by 1<<20 to print a figure in
+  megabytes. It is an estimate over those terms rather than a manifest of
+  what the manager owns, and Gia_ManStop releases members that appear in
+  no term here. A pointer-held vector contributes nothing while it is
+  unallocated, because Vec_IntMemory answers 0.0 for a null vector,
+  whereas the copy term is taken through &p->vCopies, an address that is
+  never null because that vector is embedded by value, so it contributes
+  the size of a Vec_Int_t even when the vector is empty.]
                
   SideEffects []
 
@@ -216,7 +259,13 @@ double Gia_ManMemory( Gia_Man_t * p )
 
   Synopsis    [Stops the AIG manager.]
 
-  Description []
+  Description [Stops the manager held in one caller's slot. It reads *p,
+  returns without acting when that is NULL, and otherwise calls
+  Gia_ManStop and writes NULL into that same slot. The contract is
+  slot-local: the pointer handed in has to be an address that can be read
+  and written, and only the slot it names is cleared, so any other copy
+  of the manager address held elsewhere still refers to released storage.
+  Gia_ManStop uses this same form on the nested manager p->pAigExtra.]
                
   SideEffects []
 
@@ -756,7 +805,18 @@ void Gia_ManPrintStatsMiter( Gia_Man_t * p, int fVerbose )
 
   Synopsis    [Prints stats for the AIG.]
 
-  Description []
+  Description [Records how many of the manager's combinational inputs and
+  outputs belong to flops, and touches nothing else. The body is an
+  assertion that p->nRegs is still zero followed by a raw assignment of
+  the parameter, so the precondition is enforced only where assertions
+  are enabled, and a call passing zero leaves the precondition satisfied
+  for a further call. The count is stored because it partitions the two
+  identifier lists positionally: Gia_ManPiNum and Gia_ManPoNum in gia.h
+  subtract it from the sizes of p->vCis and p->vCos, while Gia_ManRo and
+  Gia_ManRi reach flop v by adding the primary count to v, indexing the
+  tails of those same lists. That positional split is what obliges a
+  client to create all primary inputs before flop outputs and all primary
+  outputs before flop inputs; readmeaig sets out the calling order.]
                
   SideEffects []
 

@@ -35,7 +35,36 @@ ABC_NAMESPACE_IMPL_START
 
   Synopsis    [Returns the place where this node is stored (or should be stored).]
 
-  Description []
+  Description [These two functions are the whole of the lookup, and neither
+  writes a node: the caller does the writing, through the slot the second one
+  hands back. Gia_ManHashOne is the key, and it reads no object at all - it is
+  arithmetic over the literals the caller passes in. It mixes the two fanin
+  variables, the two fanin complement bits and the optional control literal
+  under five distinct odd multipliers and reduces the result modulo the
+  caller's bucket count. A literal contributes twice, once as a variable and once as an
+  inversion, which sends AND(a,b) and AND(a,!b) to different buckets. Callers
+  that hash no control literal pass iLitC as -1, the value Gia_ObjFaninLit2
+  and Gia_ObjFaninLit2p in gia.h yield for an object with no stored control,
+  so one convention covers both the key and the comparison.
+  Gia_ManHashFind returns the address of a table slot rather than an object.
+  It takes the bucket head from p->vHTable and follows next links held in
+  p->vHash, an integer vector indexed by object identifier, so the chain
+  lives in those two manager vectors rather than in the object. Comparing is
+  what reads a node: each candidate identifier on the chain is turned into an
+  object with Gia_ManObj, and Gia_ObjFaninLit0, Gia_ObjFaninLit1 and, once
+  p->pMuxes exists, Gia_ObjFaninLit2p are asked for that object's literals, so
+  objects are read here, as many as the chain is long, and none is written.
+  On a hit the returned address holds the
+  matching object identifier; on a miss it is the zero slot terminating the
+  chain, where a caller writes a new entry. Four assertions state the layout
+  and canonical form the walk depends on: one vHash entry per object,
+  ascending fanin literals unless p->pMuxes is present, both fanins
+  uncomplemented whenever the literals are not ascending, and an
+  uncomplemented second data literal whenever a control literal is given.
+  Both halves need a table that has been allocated and not yet stopped: the
+  first assertion holds only while the table is live, because Gia_ManHashStop
+  erases vHash, and the bucket count arrives in Gia_ManHashOne as the modulus
+  of its closing reduction, so an empty vHTable makes that a division by zero.]
                
   SideEffects []
 
@@ -95,7 +124,20 @@ int Gia_ManHashLookup( Gia_Man_t * p, Gia_Obj_t * p0, Gia_Obj_t * p1 )
 
   Synopsis    [Starts the hash table.]
 
-  Description []
+  Description [Initialises the two vectors and inserts nothing. The bucket
+  array p->vHTable is filled with zeros, its length taken from Abc_PrimeCudd
+  over the current AND count plus 1000, or over p->nObjsAlloc when the graph
+  holds no AND yet. That helper tests odd candidates only, so for an argument
+  above 2 it returns the next odd prime at or above it, for 2 it returns 3,
+  and for 1 it returns 1 - reachable here, since Gia_ManStart accepts an
+  nObjsMax of 1. The link array p->vHash is filled with one zero slot per
+  existing object, which establishes the one-slot-per-object layout
+  Gia_ManHashFind asserts. The entry assertion requires that no table is
+  already live. Objects the graph already holds are left unindexed, so a
+  lookup reports a miss for each of them and a later Gia_ManHashAnd over the
+  same fanins appends a structural duplicate rather than finding the original;
+  indexing what is already there belongs to Gia_ManHashStart, which opens by
+  calling this function and so inherits its empty-table assertion.]
                
   SideEffects []
 
@@ -115,7 +157,17 @@ void Gia_ManHashAlloc( Gia_Man_t * p )
 
   Synopsis    [Starts the hash table.]
 
-  Description []
+  Description [Calls Gia_ManHashAlloc and then indexes every object the
+  Gia_ManForEachAnd walk admits, which is the entire difference from
+  Gia_ManHashAlloc: afterwards the table describes the graph as it stands and
+  a lookup can find a node built before the table existed. The filter is
+  broad, selecting on Gia_ObjIsAnd in gia.h, which tests only that the object
+  is not a terminal and carries a real offset, so buffers, real XORs and real
+  MUXes are admitted alongside plain ANDs; each insertion reaches
+  Gia_ManHashFind and so requires the stored form to satisfy that function's
+  canonical-form assertions. Each insertion also asserts that the slot it
+  lands on is still zero, so a graph holding two structurally identical
+  entries stops there rather than quietly dropping one from the table.]
                
   SideEffects []
 
@@ -139,7 +191,14 @@ void Gia_ManHashStart( Gia_Man_t * p )
 
   Synopsis    [Stops the hash table.]
 
-  Description []
+  Description [Erases the two vectors that Gia_Man_t embeds by value rather
+  than holding by pointer, freeing each element array and zeroing its size and
+  capacity while leaving the Vec_Int_t members in place and reusable, so a
+  second call is harmless. Afterwards no table is live, which the rest of the
+  package reads off the zero-size vHTable. Lookups are then not merely slower
+  but invalid, since Gia_ManHashFind indexes both vectors and asserts the
+  one-entry-per-object layout this call discards; an allocation or a start has
+  to run again first.]
                
   SideEffects []
 
@@ -156,7 +215,22 @@ void Gia_ManHashStop( Gia_Man_t * p )
 
   Synopsis    [Resizes the hash table.]
 
-  Description []
+  Description [Replaces the bucket array with a fresh zeroed array of
+  Abc_PrimeCudd( 2 * Gia_ManAndNum(p) ) entries - the next prime at or above
+  twice the current AND count, a size taken from the graph rather than from
+  the old bucket count. The old array is kept as a local and each of its
+  chains is walked entry by entry: the next link is read into iNext before
+  being cleared in p->vHash, which is what lets the walk continue through a
+  chain it dismantles, and Gia_ManHashFind then supplies the entry's place in
+  the new array, so the same vHash slots are reused and only the bucket array
+  is reallocated. The moved entries are counted and that count asserted equal
+  to Gia_ManAndNum(p) - Gia_ManBufNum(p), buffers not being hashed, so a table
+  out of step with the graph is caught here. The old array is erased last.
+  Callers never size the table themselves: Gia_ManHashAnd and
+  Gia_ManHashXorReal ask for growth under one guard, requiring
+  ( p->nObjs & 0xFF ) == 0 as well as twice the bucket count being below the
+  AND count, so a request is raised only at a 256-object boundary and only
+  once the AND count has passed twice the bucket count.]
                
   SideEffects []
 
@@ -459,7 +533,28 @@ static inline Gia_Obj_t * Gia_ManAddStrash( Gia_Man_t * p, Gia_Obj_t * p0, Gia_O
 
   Synopsis    [Hashes XOR gate.]
 
-  Description []
+  Description [Finds or creates the real XOR - one object that carries the
+  operator, as against the several AND objects Gia_ManHashXor builds - and
+  returns its literal. The entry assertion requires p->fAddStrash to be clear,
+  the additive strashing path having no XOR case. Four degenerate cases fold
+  first: a constant fanin passes the other fanin through with or without
+  inversion, and a literal against itself gives 0 while against its own
+  complement it gives 1. The canonical key takes both fanin literals
+  uncomplemented, the accumulated inversion being re-applied to the literal
+  handed back, which is sound because XOR is linear in each input, and its
+  effect is that the four inversion patterns over one pair of variables share a
+  single stored object. The swap runs when iLit0 < iLit1, the opposite
+  direction from Gia_ManHashAnd, so the key is descending at this layer - and
+  Gia_ManHashFind asserts p->pMuxes || iLit0 < iLit1, permitting a descending
+  pair only where p->pMuxes is allocated, so a call that reaches the lookup
+  needs that side table even though no MUX is involved and
+  Gia_ManAppendXorReal never touches it. That precondition belongs to the
+  lookup path and not to the call as a whole, the four folds above returning
+  before it is reached. The comparison here is on
+  literals, while that append orders its own fanins by variable and stores
+  iDiff0 < iDiff1, which is the ordering, not any type field, that later makes
+  Gia_ObjIsXor report the object as a real XOR. Insertion goes through the same
+  interior-slot capacity guard described under Gia_ManHashAnd.]
                
   SideEffects []
 
@@ -511,7 +606,29 @@ int Gia_ManHashXorReal( Gia_Man_t * p, int iLit0, int iLit1 )
 
   Synopsis    [Hashes MUX gate.]
 
-  Description []
+  Description [Finds or creates the real MUX - one object that carries the
+  operator, as against the AND objects Gia_ManHashMux builds - and returns its
+  literal. As with Gia_ManHashXorReal the entry assertion requires
+  p->fAddStrash to be clear. Seven degenerate cases fold first and most leave
+  this operator altogether, delegating to Gia_ManHashAnd, Gia_ManHashOr or
+  Gia_ManHashXorReal, or returning a data literal outright, so a call here does
+  not guarantee that a MUX object is built. Only the path that survives all of
+  them appends, so the pMuxes side table that Gia_ManAppendMuxReal asserts is a
+  requirement of that appending path rather than of every call - with the table
+  absent Gia_ManHashFind leaves the control literal out of its comparison
+  entirely, so neither half of that step means anything without it. Canonical form
+  swaps the two data literals when iLit0 > iLit1 and negates the control
+  literal in the same statement, because exchanging the then and else inputs of
+  a multiplexer reverses the sense of its select - the two edits are one
+  transformation and neither is valid alone. A complemented second data literal
+  is then pushed out of both data literals and re-applied to the literal handed
+  back. The comparison here is on literals, while Gia_ManAppendMuxReal in gia.h
+  orders by variable, keeps the control literal in the pMuxes side table and
+  complements it where the data order is reversed. The object it leaves carries
+  iDiff0 greater than iDiff1, the same ordering a real AND carries, so a real
+  MUX is told from a real AND only by the presence of its pMuxes entry, which
+  is why Gia_ObjIsAndReal consults Gia_ObjIsMux. Insertion goes through the
+  same interior-slot capacity guard described under Gia_ManHashAnd.]
                
   SideEffects []
 
@@ -566,7 +683,30 @@ int Gia_ManHashMuxReal( Gia_Man_t * p, int iLitC, int iLit1, int iLit0 )
 
   Synopsis    [Hashes AND gate.]
 
-  Description []
+  Description [The constructor most graph building goes through, and the order
+  of its steps is part of its contract. Four constant cases fold before any
+  manager flag is consulted - a constant fanin returns the other fanin or 0,
+  two equal fanins return that fanin, two complementary fanins return 0 - so
+  folding happens even under p->fGiaSimple. That flag is checked next: it
+  asserts that no table is live and appends unconditionally, the raw path with
+  no lookup and no deduplication. Otherwise the growth check runs, then
+  p->fAddStrash may rewrite the pair through Gia_ManAddStrash, whose non-null
+  result is returned as a literal and may name an object that already existed
+  or one of the arguments rather than a new one. Canonical order comes last, a
+  swap when iLit0 > iLit1 comparing literals at this layer, before
+  Gia_ManHashFind is consulted: a hit counts into p->nHashHit and returns the
+  existing object's literal, a miss counts into p->nHashMiss and creates the
+  object through Gia_ManAppendAnd in gia.h, whose iDiff0 not less than iDiff1
+  ordering is what afterwards separates a plain AND or buffer from a real XOR.
+  The return value is always a literal and never an object identifier, and it
+  may name an existing object, an argument or a constant, so the call carries
+  no implication that an object was made. The interior-slot hazard is handled
+  here: the int pointer Gia_ManHashFind returns points inside p->vHash, which
+  an append can reallocate, so the code writes through that pointer only while
+  spare capacity remains and otherwise appends first and re-runs the lookup for
+  a fresh slot. Gia_ManHashOr, immediately below, is the De Morgan wrapper: it
+  complements both arguments, calls this function and complements the result,
+  so an OR is stored as an AND and no separate OR object kind exists.]
                
   SideEffects []
 
@@ -627,7 +767,17 @@ int Gia_ManHashOr( Gia_Man_t * p, int iLit0, int iLit1 )
 
   Synopsis    []
 
-  Description []
+  Description [The query form of Gia_ManHashAnd. It folds the same four
+  constant cases and applies the same canonical swap, then queries the table
+  and returns -1 when the chain holds no match. Nothing is appended and the
+  table is never resized, so the graph is left exactly as it was found; the
+  lookup does require a live table, since Gia_ManHashFind indexes p->vHTable
+  and p->vHash and asserts their layout. The -1 is not a literal, every literal
+  being a non-negative object identifier shifted left with its inversion bit,
+  so a caller that forwards the result without testing for -1 feeds a negative
+  value into literal arithmetic. Folding runs ahead of the lookup, so a call
+  whose arguments fold comes back with a constant or one of its arguments even
+  though no chain was searched, and only a genuine miss produces -1.]
                
   SideEffects []
 
@@ -658,7 +808,24 @@ int Gia_ManHashAndTry( Gia_Man_t * p, int iLit0, int iLit1 )
 
   Synopsis    []
 
-  Description []
+  Description [Builds the structural XOR: the function is expressed with
+  several AND objects instead of the single object Gia_ManHashXorReal creates.
+  Both branches go through three AND constructions and nothing else, though how
+  many objects actually appear depends on what those constructions fold or find
+  already hashed. Under p->fGiaSimple the two half terms are combined with
+  Gia_ManHashOr, which is itself an AND. Otherwise the inversion of each
+  argument is stripped, their combined parity is remembered, the two half terms
+  are built from the regular literals so that the four inversion patterns over
+  a variable pair share the same objects, and the parity is re-applied to the
+  result through Abc_LitNotCond - which is how one subgraph serves both XOR and
+  XNOR. What comes out is ordinary AND logic: Gia_ObjIsXor reports none of it
+  as an XOR afterwards, since no object carries the operator, and that loss of
+  the operator is the reason the real form exists beside this one. The pattern
+  is not unrecoverable, only untagged: Gia_ObjRecognizeExor in giaUtil.c reads
+  the two-level AND shape back out as an XOR over its two fanins, and
+  giaMuxes.c uses it to do exactly that. Nothing here reads or writes p->pMuxes, so no XOR
+  side table is needed; the hash-table requirement is whatever the
+  Gia_ManHashAnd calls impose, which outside p->fGiaSimple is a live table.]
                
   SideEffects []
 
@@ -729,7 +896,29 @@ int Gia_ManHashMaj( Gia_Man_t * p, int iData0, int iData1, int iData2 )
 
   Synopsis    [Rehashes AIG.]
 
-  Description []
+  Description [Rebuilds a graph through a fresh hash table and returns a new
+  manager. The argument is not freed and the caller still owns it, but it is
+  not left untouched: the Value word of every source object is overwritten with
+  that object's copy literal, which is the copy-map protocol the rebuild rests
+  on. A new manager is started at the old object count, the name and spec are
+  copied, fAddStrash is taken from the parameter, the table is allocated, and
+  the constant is seeded by writing literal 0 into its Value. Every source
+  object is then visited in stored order and dispatched over three cases: an
+  object satisfying Gia_ObjIsAnd is rebuilt through Gia_ManHashAnd from the
+  literals its two fanins were copied to, a combinational input is appended
+  fresh, and a combinational output is appended over its copied driver. Stored
+  order is what lets the protocol work without recursion, fanin offsets
+  pointing backwards. The table is then stopped, fAddStrash cleared and the
+  register count carried over, and the result passed through Gia_ManCleanup
+  with the swap idiom, the new manager going in as pTemp and being stopped once
+  its replacement is in hand, so two managers are built and one freed on the
+  way to the one returned. That three-case dispatch does not carry every form
+  across, and nothing in the return value reports what it dropped. The buffer
+  branch is commented out and Gia_ObjIsAnd is true for a buffer, so a buffer
+  takes the AND branch with two equal copied literals, which Gia_ManHashAnd
+  folds to that literal, leaving no buffer in the rebuilt graph. Real XORs and
+  real MUXes also satisfy Gia_ObjIsAnd and are likewise rebuilt through
+  Gia_ManHashAnd, so their operator is not preserved either.]
                
   SideEffects []
 
