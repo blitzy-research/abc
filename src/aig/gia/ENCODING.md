@@ -57,8 +57,8 @@ reader knows what backs it:
   cannot hold addresses, and records no reason for preferring a delta to an absolute identifier.
 
 Every measurement below comes from the probe that follows, built with the repository's default
-toolchain — `gcc` on `x86_64` Linux, the `CC := gcc` of `Makefile:L2` with no version pinned anywhere
-in the build. The command is:
+toolchain — `gcc` on `x86_64` Linux, the compiler the build selects by assigning `CC` at
+`Makefile:L2`, with no version pinned anywhere in the build. The command is:
 
 ```bash
 (
@@ -432,8 +432,10 @@ folding of its own: an `AND` with a constant literal creates an object.
 There is no type-tag field anywhere in the twelve bytes declared at `src/aig/gia/gia.h:L141-205`.
 Within the object, kind is inferred from three things: the `fTerm` bit `src/aig/gia/gia.h:L169`, the
 `GIA_NONE` sentinel `src/aig/gia/gia.h:L66` in `iDiff0`, and the relative ordering of `iDiff0`
-against `iDiff1`. The ordering is not incidental — each constructor in `src/aig/gia/gia.h:L1212-1516`
-deliberately arranges it, and the predicates at `src/aig/gia/gia.h:L776-799` read it back.
+against `iDiff1`. The ordering is not incidental — the four constructors that write two real offsets
+arrange it deliberately, `Gia_ManAppendAnd` `src/aig/gia/gia.h:L1253`, `Gia_ManAppendXorReal`
+`src/aig/gia/gia.h:L1307`, `Gia_ManAppendMuxReal` `src/aig/gia/gia.h:L1350` and `Gia_ManAppendBuf`
+`src/aig/gia/gia.h:L1388`, and the predicates at `src/aig/gia/gia.h:L776-799` read it back.
 
 Those three carry the classification exactly this far and no further: terminal against non-terminal,
 combinational input against combinational output, constant-0, buffer, real XOR, and AND-shaped
@@ -598,8 +600,12 @@ driver must have a strictly smaller identifier, or the offset would point forwar
 The two helpers above are not a chokepoint. Callers assign `iDiff0` and `iDiff1` directly as well,
 and those assignments carry whatever discipline their own author supplied. The enumeration below was
 produced by `grep -rnE '(->|\.)iDiff[01][^=!<>]*=[^=]' src/ --include=*.c --include=*.h --include=*.cpp`,
-so it can be re-run; it is split by whether the target object was just appended or already existed,
-because only the second group is a rewrite.
+which matches thirty-six lines, so it can be re-run; it is split by whether the target object was
+just appended or already existed, because only the second group is a rewrite.
+
+Two of the thirty-six fall outside both groups. `src/aig/gia/gia.h:L1538` is the write inside
+`Gia_ManPatchCoDriver`, one of the two helpers just described. The other is a commented-out line,
+recorded at the end of this section.
 
 Writes to a *freshly appended* object are the constructors themselves and their equivalents:
 `src/aig/gia/gia.h:L1216-1217`, `L1261-1270`, `L1317-1326`, `L1363-1373`, `L1392`, `L1414-1416`; the constant-0

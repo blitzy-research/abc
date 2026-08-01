@@ -22,7 +22,8 @@ Statements here come in four kinds, and each is marked so a reader knows what ba
   than read off any single line. Each names the basis it was derived from, either as the command that
   reproduces it or as the file that was counted.
 - **Statements about what the source does not establish** are labelled as such rather than filled in
-  with a plausible explanation. Sections 5 and 13 carry most of them.
+  with a plausible explanation. Section 6 carries most of them, section 5 one more, and section 13
+  records the dead code and stale comments found alongside them.
 
 Contents:
 
@@ -424,13 +425,16 @@ rather than papered over:
   `iFirstNonPiId` bounds the combinational-input walk, and `iFirstPoId` starts the
   combinational-output walk.
 - `pUData` `src/aig/gia/gia.h:L425` **is not determinable from the source.** Its type `Gia_Dat_t` is
-  forward-declared at `src/aig/gia/gia.h:L80` and defined nowhere in `src/`; a tree-wide search for
-  `Gia_Dat_t` returns exactly those two lines, and a search for `pUData` returns exactly one, its own
-  declaration. The field is never read, written, allocated or freed.
-- `vPolars` `src/aig/gia/gia.h:L384` **has no determinable meaning inside this package.** Nothing in
-  `src/aig/gia/` assigns or reads it; the only reference to it here besides the declaration is its
-  release, `Vec_BitFreeP( &p->vPolars );` at `src/aig/gia/giaMan.c:L125`. It is filled from outside
-  the package — see item 6 of section 13.
+  forward-declared at `src/aig/gia/gia.h:L80` and defined nowhere in `src/`. Separating the tree-wide
+  hits by form is what makes that checkable, as in item 7 of section 13: exactly two lines are code,
+  the typedef `src/aig/gia/gia.h:L80` and this field `src/aig/gia/gia.h:L425`, and the remaining hits
+  on either name are explanatory prose that this documentation added — the comment at
+  `src/aig/gia/gia.h:L73-76` and the mentions in this file. The field is never read, written,
+  allocated or freed.
+- `vPolars` `src/aig/gia/gia.h:L384` **has no determinable meaning inside this package.** No code in
+  `src/aig/gia/` assigns or reads the `Gia_Man_t` member; the only code reference to it here besides
+  the declaration is its release, `Vec_BitFreeP( &p->vPolars );` at `src/aig/gia/giaMan.c:L125`. It is
+  filled from outside the package — see item 6 of section 13.
 
 Eight of the fields are `Vec_Int_t` **by value** rather than by address, which is why the code that
 touches them takes their address: `vHash` `src/aig/gia/gia.h:L261`, `vHTable`
@@ -1574,8 +1578,10 @@ The twelve items below were found while writing this document. They are recorded
 7. **A type that is declared and never defined, and a field of that type that is never used.**
    `typedef struct Gia_Dat_t_            Gia_Dat_t;` `src/aig/gia/gia.h:L80` has no definition
    anywhere in `src/`, and `Gia_Dat_t *    pUData;` `src/aig/gia/gia.h:L425` is never read, written,
-   allocated or freed. A tree-wide search for the type name returns exactly those two lines. Neither
-   was removed.
+   allocated or freed. Separating the tree-wide hits by form is what makes that checkable, as in
+   item 5: exactly two are code, those two lines, and the rest are explanatory prose that this
+   documentation added, being the comment at `src/aig/gia/gia.h:L73-76` and the mentions in
+   section 6 and in this item. Neither line was removed.
 8. **Dead code with a behavioral consequence.** The buffer branch of `Gia_ManRehash` is commented out
    at `src/aig/gia/giaHash.c:L941-943`. Because `Gia_ObjIsAnd` is true for a buffer, a buffer reaches
    the AND branch `src/aig/gia/giaHash.c:L944-945`, where both fanin copies are the same literal, and

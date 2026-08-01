@@ -70,10 +70,10 @@ ABC_NAMESPACE_HEADER_START
 ///                         BASIC TYPES                              ///
 ////////////////////////////////////////////////////////////////////////
 
-// Gia_Dat_t is declared here and is never defined anywhere in src/. This line and the
-// pUData member of Gia_Man_t below are its only two references in the whole tree, and no
-// code reads, writes, allocates or frees a Gia_Dat_t. Its intended contents are therefore
-// not determinable from the source.
+// Gia_Dat_t is declared here and is never defined anywhere in src/. Exactly two lines of
+// code mention it - this typedef and the pUData member of Gia_Man_t below - every other
+// tree-wide hit being explanatory prose, and no code reads, writes, allocates or frees a
+// Gia_Dat_t. Its intended contents are therefore not determinable from the source.
 typedef struct Gia_MmFixed_t_        Gia_MmFixed_t;    
 typedef struct Gia_MmFlex_t_         Gia_MmFlex_t;     
 typedef struct Gia_MmStep_t_         Gia_MmStep_t;     
@@ -364,14 +364,14 @@ struct Gia_Man_t_
     // (giaGen.c:L108). Patterns are packed into those words, iPatsPi being the next slot to
     // fill out of nSimWords * 64.
     // Six members of this block are not determinable from the source and are marked one by one
-    // below: nSimWordsT has no reference anywhere outside its own declaration; vSimsT,
+    // below: nSimWordsT has no code reference outside its own declaration; vSimsT,
     // vClassOld, vClassNew and vPats are freed by Gia_ManStop but never assigned on a Gia_Man_t
     // anywhere in src/; and vPolars is written only from outside this package and never read.
-    // Four of those names also occur on unrelated structs, which say nothing about these fields.
+    // Five of those names also occur on unrelated structs, which say nothing about these fields.
     int            fBuiltInSim;   // simulate each AND as it is appended
     int            iPatsPi;       // next pattern slot, out of 64 * nSimWords
     int            nSimWords;     // simulation words per object -- the stride into vSims
-    int            nSimWordsT;    // not determinable: no reference outside this declaration
+    int            nSimWordsT;    // not determinable: no code reference outside this line
     int            iPastPiMax;    // wrapping slot counter, bounded by 64 * nSimWordsMax
     int            nSimWordsMax;  // ceiling on nSimWords; set to 8 at start-up
     Vec_Wrd_t *    vSims;         // simulation values, nSimWords words per object
